@@ -34,19 +34,22 @@ public class LocalFileSystemCodeDistributor implements ICodeDistributor {
         zkClient.start();
     }
 
+  // Meta file creation
     @Override
     public File upload(String dirPath, String topologyId) throws Exception {
         ArrayList<File> files = new ArrayList<File>();
         File destDir = new File(dirPath);
         File[] localFiles = destDir.listFiles();
 
-        List<String> filePaths = new ArrayList<String>(3);
+        List<String> filePaths = new ArrayList<String>(3); //Why 3? code,conf,jar files?
         for (File file : localFiles) {
             filePaths.add(file.getAbsolutePath());
         }
 
+        LOG.info("LocalFileSystemfilePaths" + filePaths);
         File metaFile = new File(destDir, "storm-code-distributor.meta");
         boolean isCreated = metaFile.createNewFile();
+        LOG.info("meta File" + metaFile);
         if (isCreated) {
             FileUtils.writeLines(metaFile, filePaths);
         } else {

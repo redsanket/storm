@@ -19,10 +19,20 @@
   (:import [org.apache.thrift.exception])
   (:import [org.apache.thrift.transport TNonblockingServerTransport TNonblockingServerSocket])
   (:import [org.apache.commons.io FileUtils])
+  (:import [javax.security.auth Subject])
   (:import [java.nio ByteBuffer]
            [java.util Collections HashMap]
            [backtype.storm.generated NimbusSummary])
-  (:import [java.io FileNotFoundException File FileOutputStream])
+  (:import [backtype.storm.security.auth NimbusPrincipal])
+  (:import [java.util Iterator])
+  (:import [java.nio ByteBuffer]
+           [java.util Collections List HashMap])
+  (:import [backtype.storm.blobstore AtomicOutputStream
+            BlobStore
+            BlobStoreAclHandler
+            ClientBlobStore
+            InputStreamWithMeta])
+            (:import [java.io FileNotFoundException File FileOutputStream FileInputStream])
   (:import [java.net InetAddress])
   (:import [java.nio.channels Channels WritableByteChannel])
   (:import [backtype.storm.security.auth ThriftServer ThriftConnectionType ReqContext AuthUtils])
@@ -31,17 +41,20 @@
             Cluster Topologies SchedulerAssignment SchedulerAssignmentImpl DefaultScheduler ExecutorDetails])
   (:import [backtype.storm.nimbus NimbusInfo])
   (:import [backtype.storm.utils TimeCacheMap TimeCacheMap$ExpiredCallback Utils ThriftTopologyUtils
-            BufferFileInputStream])
+            BufferFileInputStream BufferInputStream])
   (:import [backtype.storm.generated NotAliveException AlreadyAliveException StormTopology ErrorInfo
             ExecutorInfo InvalidTopologyException Nimbus$Iface Nimbus$Processor SubmitOptions TopologyInitialStatus
             KillOptions RebalanceOptions ClusterSummary SupervisorSummary TopologySummary TopologyInfo
-            ExecutorSummary AuthorizationException GetInfoOptions NumErrorsChoice])
+            ExecutorSummary AuthorizationException GetInfoOptions NumErrorsChoice SettableBlobMeta ReadableBlobMeta
+            BeginDownloadResult ListBlobsResult BlobReplication])
+
   (:import [backtype.storm.daemon Shutdownable])
   (:use [backtype.storm util config log timer zookeeper])
   (:require [backtype.storm [cluster :as cluster] [stats :as stats] [converter :as converter]])
   (:require [clojure.set :as set])
   (:import [backtype.storm.daemon.common StormBase Assignment])
   (:use [backtype.storm.daemon common])
+  (:use [backtype.storm config])
   (:import [org.apache.zookeeper data.ACL ZooDefs$Ids ZooDefs$Perms])
   (:import [backtype.storm.utils VersionInfo])
   (:gen-class
@@ -88,6 +101,25 @@
   [(first ZooDefs$Ids/CREATOR_ALL_ACL) 
    (ACL. (bit-or ZooDefs$Perms/READ ZooDefs$Perms/CREATE) ZooDefs$Ids/ANYONE_ID_UNSAFE)])
 
+(defn mk-blob-cache-map
+  "Constructs a TimeCacheMap instance with a blob store timeout whose
+  expiration callback invokes cancel on the value held by an expired entry when
+  that value is an AtomicOutputStream and calls close otherwise."
+  [conf]
+  (TimeCacheMap.
+    (int (conf NIMBUS-BLOBSTORE-EXPIRATION-SECS))
+    (reify TimeCacheMap$ExpiredCallback
+      (expire [this id stream]
+        (if (instance? AtomicOutputStream stream)
+          (.cancel stream)
+          (.close stream))))))
+
+(defn mk-bloblist-cache-map
+  "Constructs a TimeCacheMap instance with a blobstore timeout and no callback
+  function."
+  [conf]
+  (TimeCacheMap. (int (conf NIMBUS-BLOBSTORE-EXPIRATION-SECS))))
+
 (defn nimbus-data [conf inimbus]
   (let [forced-scheduler (.getForcedScheduler inimbus)]
     {:conf conf
@@ -105,6 +137,10 @@
      :heartbeats-cache (atom {})
      :downloaders (file-cache-map conf)
      :uploaders (file-cache-map conf)
+     :blob-store (Utils/getNimbusBlobStore conf)
+     :blob-downloaders (mk-blob-cache-map conf)
+     :blob-uploaders (mk-blob-cache-map conf)
+     :blob-listers (mk-bloblist-cache-map conf)
      :uptime (uptime-computer)
      :validator (new-instance (conf NIMBUS-TOPOLOGY-VALIDATOR))
      :timer (mk-timer :kill-fn (fn [t]
@@ -121,6 +157,10 @@
 
 (defn inbox [nimbus]
   (master-inbox (:conf nimbus)))
+
+(defn- get-subject []
+  (let [req (ReqContext/context)]
+    (.subject req)))
 
 (defn- read-storm-conf [conf storm-id]
   (let [stormroot (master-stormdist-root conf storm-id)]
@@ -338,16 +378,48 @@
       [(.getNodeId slot) (.getPort slot)]
       )))
 
+;(defn- setup-storm-code [nimbus conf storm-id tmp-jar-location storm-conf topology]
+;  (let [stormroot (master-stormdist-root conf storm-id)]
+;   (log-message "nimbus file location:" stormroot)
+;   (FileUtils/forceMkdir (File. stormroot))
+;   (FileUtils/cleanDirectory (File. stormroot))
+;   (setup-jar conf tmp-jar-location stormroot)
+;   (FileUtils/writeByteArrayToFile (File. (master-stormcode-path stormroot)) (Utils/serialize topology))
+;   (FileUtils/writeByteArrayToFile (File. (master-stormconf-path stormroot)) (Utils/toCompressedJsonConf storm-conf))
+;   (if (:code-distributor nimbus) (.upload (:code-distributor nimbus) stormroot storm-id))
+;   ))
+(defn- get-metadata-version [blob-store key subject]
+  (-> blob-store
+    .getBlobMeta key subject
+    .get_version))
+
 (defn- setup-storm-code [nimbus conf storm-id tmp-jar-location storm-conf topology]
-  (let [stormroot (master-stormdist-root conf storm-id)]
-   (log-message "nimbus file location:" stormroot)
-   (FileUtils/forceMkdir (File. stormroot))
-   (FileUtils/cleanDirectory (File. stormroot))
-   (setup-jar conf tmp-jar-location stormroot)
-   (FileUtils/writeByteArrayToFile (File. (master-stormcode-path stormroot)) (Utils/serialize topology))
-   (FileUtils/writeByteArrayToFile (File. (master-stormconf-path stormroot)) (Utils/toCompressedJsonConf storm-conf))
-   (if (:code-distributor nimbus) (.upload (:code-distributor nimbus) stormroot storm-id))
-   ))
+  (let [subject (get-subject)
+        storm-cluster-state (:storm-cluster-state nimbus)
+        blob-store (:blob-store nimbus)
+        jar-key (master-stormjar-key storm-id)
+        code-key (master-stormcode-key storm-id)
+        conf-key (master-stormconf-key storm-id)
+        nimbus-host-port-info (:nimbus-host-port-info nimbus)]
+    (if tmp-jar-location ;;in local mode there is no jar
+      (do
+        (.createBlob blob-store jar-key (FileInputStream. tmp-jar-location) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
+        (.setup-blobstore! storm-cluster-state jar-key nimbus-host-port-info (get-metadata-version blob-store jar-key subject) (str "active"))))
+    (.createBlob blob-store code-key (Utils/serialize topology) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
+    (.createBlob blob-store conf-key (Utils/toCompressedJsonConf storm-conf) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
+    (.setup-blobstore! storm-cluster-state code-key nimbus-host-port-info (get-metadata-version blob-store code-key subject) (str "active"))
+    (.setup-blobstore! storm-cluster-state conf-key nimbus-host-port-info (get-metadata-version blob-store conf-key subject) (str "active"))))
+
+(defn- read-storm-topology [storm-id blob-store]
+  (Utils/deserialize
+    (.readBlob blob-store (master-stormcode-key storm-id) (get-subject)) StormTopology))
+
+(defn- get-nimbus-subject []
+  (let [nimbus-subject (Subject.)
+        nimbus-principal (NimbusPrincipal.)
+        principals (.getPrincipals nimbus-subject)]
+    (.add principals nimbus-principal)
+    nimbus-subject))
 
 (defn- wait-for-desired-code-replication [nimbus conf storm-id]
   (let [min-replication-count (conf TOPOLOGY-MIN-REPLICATION-COUNT)
@@ -378,13 +450,29 @@
         (File. (master-stormcode-path stormroot))
         ) StormTopology)))
 
+(defn- read-storm-topology-as-nimbus [storm-id blob-store]
+  (Utils/deserialize
+    (.readBlob blob-store (master-stormcode-key storm-id) (get-nimbus-subject)) StormTopology))
+
 (declare compute-executor->component)
+
+(defn- get-nimbus-subject []
+  (let [nimbus-subject (Subject.)
+        nimbus-principal (NimbusPrincipal.)
+        principals (.getPrincipals nimbus-subject)]
+    (.add principals nimbus-principal)
+    nimbus-subject))
+
+(defn read-storm-conf-as-nimbus [conf storm-id blob-store]
+  (clojurify-structure
+    (Utils/fromCompressedJsonConf
+      (.readBlob blob-store (master-stormconf-key storm-id) (get-nimbus-subject)))))
 
 (defn read-topology-details [nimbus storm-id]
   (let [conf (:conf nimbus)
         storm-base (.storm-base (:storm-cluster-state nimbus) storm-id nil)
-        topology-conf (read-storm-conf conf storm-id)
-        topology (read-storm-topology conf storm-id)
+        topology-conf (read-storm-conf-as-nimbus conf storm-id)
+        topology (read-storm-topology-as-nimbus conf storm-id)
         executor->component (->> (compute-executor->component nimbus storm-id)
                                  (map-key (fn [[start-task end-task]]
                                             (ExecutorDetails. (int start-task) (int end-task)))))]
@@ -479,8 +567,8 @@
   (let [conf (:conf nimbus)
         storm-base (.storm-base (:storm-cluster-state nimbus) storm-id nil)
         component->executors (:component->executors storm-base)
-        storm-conf (read-storm-conf conf storm-id)
-        topology (read-storm-topology conf storm-id)
+        storm-conf (read-storm-conf-as-nimbus conf storm-id)
+        topology (read-storm-topology-as-nimbus conf storm-id)
         task->component (storm-task-info topology storm-conf)]
     (->> (storm-task-info topology storm-conf)
          reverse-map
@@ -494,8 +582,8 @@
 (defn- compute-executor->component [nimbus storm-id]
   (let [conf (:conf nimbus)
         executors (compute-executors nimbus storm-id)
-        topology (read-storm-topology conf storm-id)
-        storm-conf (read-storm-conf conf storm-id)
+        topology (read-storm-topology-as-nimbus conf storm-id)
+        storm-conf (read-storm-conf-as-nimbus conf storm-id)
         task->component (storm-task-info topology storm-conf)
         executor->component (into {} (for [executor executors
                                            :let [start-task (first executor)
@@ -968,6 +1056,27 @@
     (doseq [storm-id locally-available-active-storm-ids]
       (.setup-code-distributor! storm-cluster-state storm-id (:nimbus-host-port-info nimbus)))))
 
+(defn get-keys [blob-store]
+  (let [key-iter (.listKeys blob-store)]
+    (if (not-nil? (.hasNext key-iter))
+      (let [ret-set (->> key-iter
+                         (iterator-seq)
+                         (java.util.ArrayList.))]
+      ret-set))))
+
+;;setsup blobstore for all current keys
+(defn setup-blobstore [nimbus]
+  (let [storm-cluster-state (:storm-cluster-state nimbus)
+        blob-store (:blob-store nimbus)
+        local-list-of-keys (set (get-keys blob-store))
+        all-keys (set (.active-keys storm-cluster-state))
+        locally-available-active-keys (set/intersection local-list-of-keys all-keys)
+        ]
+    (log-message "creating list of key entries for blobstore inside zookeeper")
+    (doseq [key locally-available-active-keys]
+      (.setup-blobstore! storm-cluster-state (:nimbus-host-port-info nimbus) (get-metadata-version blob-store key (get-nimbus-subject)) (str "active"))
+      )))
+
 (defn- get-errors [storm-cluster-state storm-id component-id]
   (->> (.errors storm-cluster-state storm-id component-id)
        (map #(doto (ErrorInfo. (:error %) (:time-secs %))
@@ -1008,7 +1117,7 @@
 
 (defn try-read-storm-conf [conf storm-id]
   (try-cause
-    (read-storm-conf conf storm-id)
+    (read-storm-conf-as-nimbus conf storm-id)
     (catch FileNotFoundException e
        (throw (NotAliveException. (str storm-id))))
   )
@@ -1085,10 +1194,12 @@
 
     (.addToLeaderLockQueue (:leader-elector nimbus))
     (cleanup-corrupt-topologies! nimbus)
-    (setup-code-distributor nimbus)
+    ;;(setup-code-distributor nimbus)
+    (setup-blobstore nimbus)
 
     ;register call back for code-distributor
     (.code-distributor (:storm-cluster-state nimbus) (fn [] (sync-code conf nimbus)))
+    ;; add code to register blobstore
     (when (is-leader nimbus :throw-exception false)
       (doseq [storm-id (.active-storms (:storm-cluster-state nimbus))]
         (transition! nimbus storm-id :startup)))
@@ -1187,7 +1298,7 @@
               ;;cred-update-lock is not needed here because creds are being added for the first time.
               (.set-credentials! storm-cluster-state storm-id credentials storm-conf)
               (setup-storm-code nimbus conf storm-id uploadedJarLocation storm-conf topology)
-              (.setup-code-distributor! storm-cluster-state storm-id (:nimbus-host-port-info nimbus))
+              ;;(.setup-code-distributor! storm-cluster-state storm-id (:nimbus-host-port-info nimbus));; pass the version-info data to create a zk-node too...
               (wait-for-desired-code-replication nimbus total-storm-conf storm-id)
               (.setup-heartbeats! storm-cluster-state storm-id)
               (.setup-backpressure! storm-cluster-state storm-id)
@@ -1403,6 +1514,7 @@
                                                                                    1))
                                                topo-summ
                                           ))]
+          (log-message "topology-summ " topology-summaries "\n nimbuses-sum" nimbuses)
           (ClusterSummary. supervisor-summaries
                            topology-summaries
                            nimbuses)
@@ -1470,6 +1582,161 @@
                                   storm-id
                                   (doto (GetInfoOptions.) (.set_num_err_choice NumErrorsChoice/ALL))))
 
+      ;;Blobstore implementation code
+      (^String beginCreateBlob [this
+                                ^String blob-key
+                                ^SettableBlobMeta blob-meta]
+        (let [session-id (uuid)]
+          (.put (:blob-uploaders nimbus)
+            session-id
+            (->> (ReqContext/context)
+              (.subject)
+              (.createBlob (:blob-store nimbus) blob-key blob-meta)))
+          (log-message "Created blob for " blob-key
+            " with session id " session-id)
+          (str session-id)))
+
+      (^String beginUpdateBlob [this ^String blob-key]
+        (if-let [^AtomicOutputStream os (->> (ReqContext/context)
+                                          (.subject)
+                                          (.updateBlob (:blob-store nimbus)
+                                            blob-key))]
+          (let [session-id (uuid)]
+            (.put (:blob-uploaders nimbus) session-id os)
+            (log-message "Created upload session for " blob-key
+              " with id " session-id)
+            (str session-id))
+          (throw-runtime "Could not find blob for key " blob-key)))
+
+      (^void uploadBlobChunk [this ^String session ^ByteBuffer blob-chunk]
+        (let [uploaders (:blob-uploaders nimbus)]
+          (if-let [^AtomicOutputStream os (.get uploaders session)]
+            (let [chunk-array (.array blob-chunk)
+                  remaining (.remaining blob-chunk)
+                  array-offset (.arrayOffset blob-chunk)
+                  position (.position blob-chunk)]
+              (.write os chunk-array (+ array-offset position) remaining)
+              (.put uploaders session os))
+            (throw-runtime "Blob for session "
+              session
+              " does not exist (or timed out)"))))
+
+      (^void finishBlobUpload [this ^String session]
+        (if-let [^AtomicOutputStream os (.get (:blob-uploaders nimbus) session)]
+          (do
+            (.close os)
+            (log-message "Finished uploading blob for session "
+              session
+              ". Closing session.")
+            (.remove (:blob-uploaders nimbus) session))
+          (throw-runtime "Blob for session "
+            session
+            " does not exist (or timed out)")))
+
+      (^void cancelBlobUpload [this ^String session]
+        (if-let [^AtomicOutputStream os (.get (:blob-uploaders nimbus) session)]
+          (do
+            (.cancel os)
+            (log-message "Canceled uploading blob for session "
+              session
+              ". Closing session.")
+            (.remove (:blob-uploaders nimbus) session))
+          (throw-runtime "Blob for session "
+            session
+            " does not exist (or timed out)")))
+
+      (^ReadableBlobMeta getBlobMeta [this ^String blob-key]
+        (if-let [^ReadableBlobMeta ret (->> (ReqContext/context)
+                                         (.subject)
+                                         (.getBlobMeta (:blob-store nimbus)
+                                           blob-key))]
+          ret
+          (throw-runtime "Could not find blob metadata for key " blob-key)))
+
+      (^void setBlobMeta [this ^String blob-key ^SettableBlobMeta blob-meta]
+        (->> (ReqContext/context)
+          (.subject)
+          (.setBlobMeta (:blob-store nimbus) blob-key blob-meta)))
+
+      (^BeginDownloadResult beginBlobDownload [this ^String blob-key]
+        (if-let [^InputStreamWithMeta is (->> (ReqContext/context)
+                                           (.subject)
+                                           (.getBlob (:blob-store nimbus)
+                                             blob-key))]
+          (let [session-id (uuid)
+                ret (BeginDownloadResult. (.getVersion is) (str session-id))]
+            (.set_data_size ret (.getFileLength is))
+            (.put (:blob-downloaders nimbus) session-id (BufferInputStream. is ^Integer (Utils/getInt (conf STORM-BLOBSTORE-INPUTSTREAM-BUFFER-SIZE-BYTES) (int 65536))))
+            (log-message "Created download session for " blob-key
+              " with id " session-id)
+            ret)
+          (throw-runtime "Could not find blob for key " blob-key)))
+
+      (^ByteBuffer downloadBlobChunk [this ^String session]
+        (let [downloaders (:blob-downloaders nimbus)
+              ^BufferInputStream is (.get downloaders session)]
+          (when-not is
+            (throw (RuntimeException.
+                     "Could not find input stream for session " session)))
+          (let [ret (.read is)]
+            (.put downloaders session is)
+            (when (empty? ret)
+              (.close is)
+              (.remove downloaders session))
+            (log-debug "Sending " (alength ret) " bytes")
+            (ByteBuffer/wrap ret))))
+
+      (^void deleteBlob [this ^String blob-key]
+        (let [subject (->> (ReqContext/context)
+                           (.subject))]
+        (.deleteBlob (:blob-store nimbus) blob-key subject)
+        (.setup-blobstore! blob-key (:nimbus-host-port-info nimbus) (get-metadata-version (:blob-store nimbus) blob-key subject) (str "deleted"))
+        (log-message "Deleted blob for key " blob-key)))
+
+      (^ListBlobsResult listBlobs [this ^String session]
+        (let [listers (:blob-listers nimbus)
+              ^Iterator keys-it (if (clojure.string/blank? session)
+                                  (->> (ReqContext/context)
+                                    (.subject)
+                                    (.listKeys (:blob-store nimbus)))
+                                  (.get listers session))
+              _ (or keys-it (throw-runtime "Blob list for session "
+                              session
+                              " does not exist (or timed out)"))
+
+              ;; Create a new session id if the user gave an empty session string.
+              ;; This is the use case when the user wishes to list blobs
+              ;; starting from the beginning.
+              session (if (clojure.string/blank? session)
+                        (let [new-session (uuid)]
+                          (log-message "Creating new session for downloading list " new-session)
+                          new-session)
+                        session)]
+          (if-not (.hasNext keys-it)
+            (do
+              (.remove listers session)
+              (log-message "No more blobs to list for session " session)
+              ;; A blank result communicates that there are no more blobs.
+              (ListBlobsResult. (java.util.ArrayList. 0) (str session)))
+            (let [^List list-chunk (->> keys-it
+                                     (iterator-seq)
+                                     (take 100) ;; Limit to next 100 keys
+                                     (java.util.ArrayList.))
+                  _ (log-message session " downloading " (.size list-chunk) " entries")]
+              (.put listers session keys-it)
+              (ListBlobsResult. list-chunk (str session))))))
+
+      (^BlobReplication getBlobReplication [this ^String blob-key]
+        (->> (ReqContext/context)
+          (.subject)
+          (.getBlobReplication (:blob-store nimbus) blob-key)))
+
+      (^BlobReplication updateBlobReplication [this ^String blob-key ^int replication]
+        (->> (ReqContext/context)
+          (.subject)
+          (.updateBlobReplication (:blob-store nimbus) blob-key replication)))
+      ;;Blobstore implementation code ends
+
       Shutdownable
       (shutdown [this]
         (log-message "Shutting down master")
@@ -1523,7 +1790,7 @@
               (when-not (contains? (code-ids (:conf nimbus)) missing)
                 (try
                   (download-code conf nimbus missing (.getHost nimbus-host-port) (.getPort nimbus-host-port))
-                  (catch Exception e (log-error e "Exception while trying to syn-code for missing topology" missing)))))))))
+                  (catch Exception e (log-error e "Exception while trying to sync-code for missing topology" missing)))))))))
 
     (if (empty? (set/difference active-topologies (set (code-ids (:conf nimbus)))))
       (.addToLeaderLockQueue (:leader-elector nimbus)))))

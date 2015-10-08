@@ -32,6 +32,7 @@
 (defprotocol ClusterState
   (set-ephemeral-node [this path data acls])
   (delete-node [this path])
+  (delete-node-blobstore [this parent-node-path nimbus-host-port-info])
   (create-sequential [this path data acls])
   ;; if node does not exist, create persistent with this data
   (set-data [this path data acls])
@@ -109,6 +110,10 @@
          (do
            (zk/mkdirs zk (parent-path path) acls)
            (zk/create-node zk path data :persistent acls))))
+
+      (delete-node-blobstore
+        [this parent-node-path nimbus-host-port-info]
+        (zk/delete-node-blobstore zk parent-node-path nimbus-host-port-info))
 
      (delete-node
        [this path]
@@ -190,7 +195,12 @@
   (remove-storm-base! [this storm-id])
   (set-assignment! [this storm-id info])
   ;adds nimbusinfo under /stormroot/code-distributor/storm-id
+  ;; RABW
   (setup-code-distributor! [this storm-id info])
+  ;;blobstore
+  (setup-blobstore! [this key nimbusInfo versionInfo statusInfo])
+  (active-keys [this])
+  (blobstore [this callback])
   (remove-storm! [this storm-id])
   (report-error [this storm-id component-id node port error])
   (errors [this storm-id component-id])
@@ -207,6 +217,7 @@
 (def BACKPRESSURE-ROOT "backpressure")
 (def ERRORS-ROOT "errors")
 (def CODE-DISTRIBUTOR-ROOT "code-distributor")
+(def BLOBSTORE-ROOT "blobstore")
 (def NIMBUSES-ROOT "nimbuses")
 (def CREDENTIALS-ROOT "credentials")
 
@@ -217,7 +228,9 @@
 (def WORKERBEATS-SUBTREE (str "/" WORKERBEATS-ROOT))
 (def BACKPRESSURE-SUBTREE (str "/" BACKPRESSURE-ROOT))
 (def ERRORS-SUBTREE (str "/" ERRORS-ROOT))
+;; RABW
 (def CODE-DISTRIBUTOR-SUBTREE (str "/" CODE-DISTRIBUTOR-ROOT))
+(def BLOBSTORE-SUBTREE (str "/" BLOBSTORE-SUBTREE))
 (def NIMBUSES-SUBTREE (str "/" NIMBUSES-ROOT))
 (def CREDENTIALS-SUBTREE (str "/" CREDENTIALS-ROOT))
 
@@ -229,6 +242,11 @@
   [id]
   (str ASSIGNMENTS-SUBTREE "/" id))
 
+(defn blobstore-path
+  [key]
+  (str BLOBSTORE-SUBTREE "/" key))
+
+;; RABW
 (defn code-distributor-path
   [id]
   (str CODE-DISTRIBUTOR-SUBTREE "/" id))
@@ -331,6 +349,7 @@
         assignments-callback (atom nil)
         storm-base-callback (atom {})
         code-distributor-callback (atom nil)
+        blobstore-callback (atom nil)
         credentials-callback (atom {})
         state-id (register
                   cluster-state
@@ -345,12 +364,13 @@
                                                (issue-map-callback! assignment-info-with-version-callback (first args))))
                          SUPERVISORS-ROOT (issue-callback! supervisors-callback)
                          CODE-DISTRIBUTOR-ROOT (issue-callback! code-distributor-callback)
+                         BLOBSTORE-SUBTREE (issue-callback! blobstore-callback)
                          STORMS-ROOT (issue-map-callback! storm-base-callback (first args))
                          CREDENTIALS-ROOT (issue-map-callback! credentials-callback (first args))
                          BACKPRESSURE-ROOT (issue-map-callback! backpressure-callback (first args))
                          ;; this should never happen
                          (exit-process! 30 "Unknown callback for subtree " subtree args)))))]
-    (doseq [p [ASSIGNMENTS-SUBTREE STORMS-SUBTREE SUPERVISORS-SUBTREE WORKERBEATS-SUBTREE ERRORS-SUBTREE CODE-DISTRIBUTOR-SUBTREE NIMBUSES-SUBTREE]]
+    (doseq [p [ASSIGNMENTS-SUBTREE STORMS-SUBTREE SUPERVISORS-SUBTREE WORKERBEATS-SUBTREE ERRORS-SUBTREE CODE-DISTRIBUTOR-SUBTREE BLOBSTORE-SUBTREE NIMBUSES-SUBTREE]]
       (mkdirs cluster-state p acls))
     (reify
       StormClusterState
@@ -390,6 +410,15 @@
           (sync-path cluster-state CODE-DISTRIBUTOR-SUBTREE)
           (get-children cluster-state CODE-DISTRIBUTOR-SUBTREE (not-nil? callback))))
 
+      ;; blobstore daemon
+      (blobstore
+        [this callback]
+        (when callback)
+          (reset! blobstore-callback callback)
+        (do
+          (sync-path cluster-state BLOBSTORE-SUBTREE)
+          (get-children cluster-state BLOBSTORE-SUBTREE (not-nil? callback))))
+
       (nimbuses
         [this]
         (map #(maybe-deserialize (get-data cluster-state (nimbus-path %1) false) NimbusSummary)
@@ -419,6 +448,10 @@
               (get-children cluster-state path false)))))
 
       (active-storms
+        [this]
+        (get-children cluster-state STORMS-SUBTREE false))
+
+      (active-keys
         [this]
         (get-children cluster-state STORMS-SUBTREE false))
 
@@ -557,6 +590,7 @@
         (let [thrift-assignment (thriftify-assignment info)]
           (set-data cluster-state (assignment-path storm-id) (Utils/serialize thrift-assignment) acls)))
 
+      ;; RABW
       (setup-code-distributor!
         [this storm-id nimbusInfo]
         (let [path (str (code-distributor-path storm-id) "/" (.toHostPortString nimbusInfo))]
@@ -564,6 +598,15 @@
         ;we delete the node first to ensure the node gets created as part of this session only.
         (delete-node cluster-state path)
         (set-ephemeral-node cluster-state path nil acls)))
+
+      (setup-blobstore!
+        [this key nimbusInfo versionInfo statusInfo]
+        (let [path (str (blobstore-path key) "/" (.toHostPortString nimbusInfo) ":" versionInfo ":" statusInfo)]
+          (mkdirs cluster-state (blobstore-path key) acls)
+          (log-message "key" key "blobstore-nimbus" nimbusInfo "versionInfo" versionInfo "statusInfo" statusInfo)
+          ;we delete the node first to ensure the node gets created as part of this session only.
+          (delete-node-blobstore cluster-state (str (blobstore-path key)) (.toHostPortString nimbusInfo))
+          (set-ephemeral-node cluster-state path nil acls)))
 
       (remove-storm!
         [this storm-id]

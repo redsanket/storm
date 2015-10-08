@@ -24,9 +24,11 @@
 package backtype.storm.generated;
 
 
+import java.util.Map;
+import java.util.HashMap;
 import org.apache.thrift.TEnum;
 
-public enum AccessControlType implements TEnum {
+public enum AccessControlType implements org.apache.thrift.TEnum {
   OTHER(1),
   USER(2);
 
@@ -47,7 +49,7 @@ public enum AccessControlType implements TEnum {
    * Find a the enum type by its integer value, as defined in the Thrift IDL.
    * @return null if the value is not found.
    */
-  public static AccessControlType findByValue(int value) {
+  public static AccessControlType findByValue(int value) { 
     switch (value) {
       case 1:
         return OTHER;

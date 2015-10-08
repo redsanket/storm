@@ -17,29 +17,18 @@
  */
 package backtype.storm.blobstore;
 
+import backtype.storm.daemon.Shutdownable;
+import backtype.storm.generated.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.security.auth.Subject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.NoSuchElementException;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Pattern;
-
-import javax.security.auth.Subject;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import backtype.storm.daemon.Shutdownable;
-import backtype.storm.generated.AuthorizationException;
-import backtype.storm.generated.KeyNotFoundException;
-import backtype.storm.generated.KeyAlreadyExistsException;
-import backtype.storm.generated.ReadableBlobMeta;
-import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 
 /**
  * Provides a way to store blobs that can be downloaded.

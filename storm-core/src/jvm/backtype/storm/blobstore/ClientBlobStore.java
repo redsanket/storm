@@ -17,16 +17,11 @@
  */
 package backtype.storm.blobstore;
 
+import backtype.storm.daemon.Shutdownable;
+import backtype.storm.generated.*;
+
 import java.util.Iterator;
 import java.util.Map;
-
-import backtype.storm.daemon.Shutdownable;
-import backtype.storm.generated.AuthorizationException;
-import backtype.storm.generated.ReadableBlobMeta;
-import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
-import backtype.storm.generated.KeyAlreadyExistsException;
-import backtype.storm.generated.KeyNotFoundException;
 
 
 public abstract class ClientBlobStore implements Shutdownable {

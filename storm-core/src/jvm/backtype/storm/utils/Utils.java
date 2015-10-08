@@ -18,18 +18,22 @@
 package backtype.storm.utils;
 
 import backtype.storm.Config;
-import backtype.storm.generated.AuthorizationException;
-import backtype.storm.generated.ComponentCommon;
-import backtype.storm.generated.ComponentObject;
-import backtype.storm.generated.StormTopology;
+import backtype.storm.blobstore.*;
+import backtype.storm.generated.*;
+import backtype.storm.localizer.Localizer;
 import backtype.storm.serialization.DefaultSerializationDelegate;
 import backtype.storm.serialization.SerializationDelegate;
 import clojure.lang.IFn;
 import clojure.lang.RT;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.lang.StringUtils;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.thrift.TBase;
+import org.apache.thrift.TDeserializer;
 import org.apache.thrift.TException;
+import org.apache.thrift.TSerializer;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Id;
@@ -48,14 +52,25 @@ import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.io.File;
 import java.io.FileInputStream;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public class Utils {
     private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
     public static final String DEFAULT_STREAM_ID = "default";
-
+    public static final String DEFAULT_BLOB_VERSION_SUFFIX = ".version";
+    public static final String CURRENT_BLOB_SUFFIX_ID = "current";
+    public static final String DEFAULT_CURRENT_BLOB_SUFFIX = "." + CURRENT_BLOB_SUFFIX_ID;
+    private static ThreadLocal<TSerializer> threadSer = new ThreadLocal<TSerializer>();
+    private static ThreadLocal<TDeserializer> threadDes = new ThreadLocal<TDeserializer>();
     private static SerializationDelegate serializationDelegate;
 
     static {
@@ -357,7 +372,142 @@ public class Utils {
         return ret;
     }
 
-    public static void downloadFromMaster(Map conf, String file, String localFile) throws AuthorizationException, IOException, TException {
+  public static Localizer createLocalizer(Map conf, String baseDir) {
+    return new Localizer(conf, baseDir);
+  }
+
+  public static ClientBlobStore getSupervisorBlobStore(Map conf) {
+    ClientBlobStore store = (ClientBlobStore) newInstance(
+            (String) conf.get(Config.SUPERVISOR_BLOBSTORE));
+    store.prepare(conf);
+    return store;
+  }
+
+  public static BlobStore getNimbusBlobStore(Map conf) {
+    return getNimbusBlobStore(conf, null);
+  }
+
+  public static BlobStore getNimbusBlobStore(Map conf, String baseDir) {
+    String type = (String)conf.get(Config.NIMBUS_BLOBSTORE);
+    if (type == null) {
+      type = LocalFsBlobStore.class.getName();
+    }
+    BlobStore store = (BlobStore) newInstance(type);
+    HashMap nconf = new HashMap(conf);
+    // only enable cleanup of blobstore on nimbus
+    nconf.put(Config.BLOBSTORE_CLEANUP_ENABLE, new Boolean(true));
+    store.prepare(nconf, baseDir);
+    return store;
+  }
+
+  // Meant to be called only by the supervisor for stormjar/stormconf/stormcode files.
+  public static void downloadResourcesAsSupervisor(Map conf, String key, String localFile,
+                                                   ClientBlobStore cb) throws AuthorizationException, KeyNotFoundException, IOException {
+    final int MAX_RETRY_ATTEMPTS = 2;
+    final int ATTEMPTS_INTERVAL_TIME = 100;
+    for (int retryAttempts = 0; retryAttempts < MAX_RETRY_ATTEMPTS; retryAttempts++) {
+      if (downloadResourcesAsSupervisorAttempt(cb, key, localFile)) {
+        break;
+      }
+      Utils.sleep(ATTEMPTS_INTERVAL_TIME);
+    }
+    //NO Exception on error the supervisor will try again after a while
+  }
+
+  private static boolean downloadResourcesAsSupervisorAttempt(ClientBlobStore cb, String key, String localFile) {
+    boolean isSuccess = false;
+    FileOutputStream out = null;
+    InputStreamWithMeta in = null;
+    try {
+      out = new FileOutputStream(localFile);
+      in = cb.getBlob(key);
+      long fileSize = in.getFileLength();
+
+      byte[] buffer = new byte[1024];
+      int len;
+      int downloadFileSize = 0;
+      while ((len = in.read(buffer)) >= 0) {
+        out.write(buffer, 0, len);
+        downloadFileSize += len;
+      }
+
+      isSuccess = (fileSize == downloadFileSize);
+    } catch (TException | IOException e) {
+      LOG.error("An exception happened while downloading {} from blob store.", localFile, e);
+    } finally {
+      try {
+        if (out != null) out.close();
+      } catch (IOException ignored) {}
+      try {
+        if (in != null) in.close();
+      } catch (IOException ignored) {}
+    }
+    if (!isSuccess) {
+      try {
+        Files.deleteIfExists(Paths.get(localFile));
+      } catch (IOException ex) {
+        LOG.error("Failed trying to delete the partially downloaded {}", localFile, ex);
+      }
+    }
+    return isSuccess;
+  }
+
+  public static boolean checkFileExists(String dir, String file) {
+    return Files.exists(new File(dir, file).toPath());
+  }
+
+  public static long nimbusVersionOfBlob(String key, ClientBlobStore cb) throws AuthorizationException, KeyNotFoundException{
+    long nimbusBlobVersion = 0;
+    try {
+      ReadableBlobMeta metadata = cb.getBlobMeta(key);
+      nimbusBlobVersion = metadata.get_version();
+    } catch (AuthorizationException | KeyNotFoundException exp) {
+      throw exp;
+    } catch (TException e) {
+      throw new RuntimeException(e);
+    }
+    return nimbusBlobVersion;
+  }
+
+  public static String getFileOwner(String path) throws IOException {
+    return Files.getOwner(FileSystems.getDefault().getPath(path)).getName();
+  }
+
+  public static long localVersionOfBlob(String localFile) {
+    File f = new File(localFile + DEFAULT_BLOB_VERSION_SUFFIX);
+    long currentVersion = 0;
+    if (f.exists() && !(f.isDirectory())) {
+      BufferedReader br = null;
+      try {
+        br = new BufferedReader(new FileReader(f));
+        String line = br.readLine();
+        currentVersion = Long.parseLong(line);
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      } finally {
+        try {
+          if (br != null) {
+            br.close();
+          }
+        } catch (Exception ignore) {
+          LOG.error("Exception trying to cleanup", ignore);
+        }
+      }
+      return currentVersion;
+    } else {
+      return -1;
+    }
+  }
+
+  public static String constructBlobWithVersionFileName(String fileName, long version) {
+    return fileName + "." + version;
+  }
+
+  public static String constructBlobCurrentSymlinkName(String fileName) {
+    return fileName + Utils.DEFAULT_CURRENT_BLOB_SUFFIX;
+  }
+
+  public static void downloadFromMaster(Map conf, String file, String localFile) throws AuthorizationException, IOException, TException {
         NimbusClient client = NimbusClient.getConfiguredClient(conf);
         try {
         	download(client, file, localFile);
@@ -431,6 +581,51 @@ public class Utils {
       return result;
     }
 
+    private static TDeserializer getDes() {
+      TDeserializer des = threadDes.get();
+      if(des == null) {
+        des = new TDeserializer();
+        threadDes.set(des);
+      }
+      return des;
+    }
+
+    public static byte[] thriftSerialize(TBase t) {
+      try {
+        TSerializer ser = threadSer.get();
+        if (ser == null) {
+          ser = new TSerializer();
+          threadSer.set(ser);
+        }
+        return ser.serialize(t);
+      } catch (TException e) {
+        LOG.error("Failed to serialize to thrift: ", e);
+        throw new RuntimeException(e);
+      }
+    }
+
+    public static <T> T thriftDeserialize(Class c, byte[] b, int offset, int length) {
+      try {
+        T ret = (T) c.newInstance();
+        TDeserializer des = getDes();
+        des.deserialize((TBase)ret, b, offset, length);
+        return ret;
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+    public static <T> T thriftDeserialize(Class c, byte[] b) {
+      try {
+        T ret = (T) c.newInstance();
+        TDeserializer des = getDes();
+        des.deserialize((TBase) ret, b);
+        return ret;
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+
+    }
     public static Integer getInt(Object o, Integer defaultValue) {
       if (null == o) {
         return defaultValue;
@@ -467,6 +662,302 @@ public class Utils {
     public static long secureRandomLong() {
         return UUID.randomUUID().getLeastSignificantBits();
     }
+
+  /**
+   * Unpack matching files from a jar. Entries inside the jar that do
+   * not match the given pattern will be skipped.
+   *
+   * @param jarFile the .jar file to unpack
+   * @param toDir the destination directory into which to unpack the jar
+   */
+  public static void unJar(File jarFile, File toDir)
+          throws IOException {
+    JarFile jar = new JarFile(jarFile);
+    try {
+      Enumeration<JarEntry> entries = jar.entries();
+      while (entries.hasMoreElements()) {
+        final JarEntry entry = entries.nextElement();
+        if (!entry.isDirectory()) {
+          InputStream in = jar.getInputStream(entry);
+          try {
+            File file = new File(toDir, entry.getName());
+            ensureDirectory(file.getParentFile());
+            OutputStream out = new FileOutputStream(file);
+            try {
+              copyBytes(in, out, 8192);
+            } finally {
+              out.close();
+            }
+          } finally {
+            in.close();
+          }
+        }
+      }
+    } finally {
+      jar.close();
+    }
+  }
+
+  /**
+   * Copies from one stream to another.
+   *
+   * @param in InputStrem to read from
+   * @param out OutputStream to write to
+   * @param buffSize the size of the buffer
+   */
+  public static void copyBytes(InputStream in, OutputStream out, int buffSize)
+          throws IOException {
+    PrintStream ps = out instanceof PrintStream ? (PrintStream)out : null;
+    byte buf[] = new byte[buffSize];
+    int bytesRead = in.read(buf);
+    while (bytesRead >= 0) {
+      out.write(buf, 0, bytesRead);
+      if ((ps != null) && ps.checkError()) {
+        throw new IOException("Unable to write to output stream.");
+      }
+      bytesRead = in.read(buf);
+    }
+  }
+
+  /**
+   * Ensure the existence of a given directory.
+   *
+   * @throws IOException if it cannot be created and does not already exist
+   */
+  private static void ensureDirectory(File dir) throws IOException {
+    if (!dir.mkdirs() && !dir.isDirectory()) {
+      throw new IOException("Mkdirs failed to create " +
+              dir.toString());
+    }
+  }
+
+  /**
+   * Given a File input it will unzip the file in a the unzip directory
+   * passed as the second parameter
+   * @param inFile The zip file as input
+   * @param unzipDir The unzip directory where to unzip the zip file.
+   * @throws IOException
+   */
+  public static void unZip(File inFile, File unzipDir) throws IOException {
+    Enumeration<? extends ZipEntry> entries;
+    ZipFile zipFile = new ZipFile(inFile);
+
+    try {
+      entries = zipFile.entries();
+      while (entries.hasMoreElements()) {
+        ZipEntry entry = entries.nextElement();
+        if (!entry.isDirectory()) {
+          InputStream in = zipFile.getInputStream(entry);
+          try {
+            File file = new File(unzipDir, entry.getName());
+            if (!file.getParentFile().mkdirs()) {
+              if (!file.getParentFile().isDirectory()) {
+                throw new IOException("Mkdirs failed to create " +
+                        file.getParentFile().toString());
+              }
+            }
+            OutputStream out = new FileOutputStream(file);
+            try {
+              byte[] buffer = new byte[8192];
+              int i;
+              while ((i = in.read(buffer)) != -1) {
+                out.write(buffer, 0, i);
+              }
+            } finally {
+              out.close();
+            }
+          } finally {
+            in.close();
+          }
+        }
+      }
+    } finally {
+      zipFile.close();
+    }
+  }
+
+  public static String getString(Object o, String defaultValue) {
+    if (null == o) {
+      return defaultValue;
+    }
+
+    if (o instanceof String) {
+      return (String) o;
+    } else {
+      throw new IllegalArgumentException("Don't know how to convert " + o + " + to String");
+    }
+  }
+
+  /**
+   * Given a Tar File as input it will untar the file in a the untar directory
+   * passed as the second parameter
+   * <p/>
+   * This utility will untar ".tar" files and ".tar.gz","tgz" files.
+   *
+   * @param inFile   The tar file as input.
+   * @param untarDir The untar directory where to untar the tar file.
+   * @throws IOException
+   */
+  public static void unTar(File inFile, File untarDir) throws IOException {
+    if (!untarDir.mkdirs()) {
+      if (!untarDir.isDirectory()) {
+        throw new IOException("Mkdirs failed to create " + untarDir);
+      }
+    }
+
+    boolean gzipped = inFile.toString().endsWith("gz");
+    if (onWindows()) {
+      // Tar is not native to Windows. Use simple Java based implementation for
+      // tests and simple tar archives
+      unTarUsingJava(inFile, untarDir, gzipped);
+    } else {
+      // spawn tar utility to untar archive for full fledged unix behavior such
+      // as resolving symlinks in tar archives
+      unTarUsingTar(inFile, untarDir, gzipped);
+    }
+  }
+
+  private static void unTarUsingTar(File inFile, File untarDir,
+                                    boolean gzipped) throws IOException {
+    StringBuffer untarCommand = new StringBuffer();
+    if (gzipped) {
+      untarCommand.append(" gzip -dc '");
+      untarCommand.append(inFile.toString());
+      untarCommand.append("' | (");
+    }
+    untarCommand.append("cd '");
+    untarCommand.append(untarDir.toString());
+    untarCommand.append("' ; ");
+    untarCommand.append("tar -xf ");
+
+    if (gzipped) {
+      untarCommand.append(" -)");
+    } else {
+      untarCommand.append(inFile.toString());
+    }
+    String[] shellCmd = {"bash", "-c", untarCommand.toString()};
+    ShellUtils.ShellCommandExecutor shexec = new ShellUtils.ShellCommandExecutor(shellCmd);
+    shexec.execute();
+    int exitcode = shexec.getExitCode();
+    if (exitcode != 0) {
+      throw new IOException("Error untarring file " + inFile +
+              ". Tar process exited with exit code " + exitcode);
+    }
+  }
+
+  private static void unTarUsingJava(File inFile, File untarDir,
+                                     boolean gzipped) throws IOException {
+    InputStream inputStream = null;
+    TarArchiveInputStream tis = null;
+    try {
+      if (gzipped) {
+        inputStream = new BufferedInputStream(new GZIPInputStream(
+                new FileInputStream(inFile)));
+      } else {
+        inputStream = new BufferedInputStream(new FileInputStream(inFile));
+      }
+      tis = new TarArchiveInputStream(inputStream);
+      for (TarArchiveEntry entry = tis.getNextTarEntry(); entry != null; ) {
+        unpackEntries(tis, entry, untarDir);
+        entry = tis.getNextTarEntry();
+      }
+    } finally {
+      cleanup(tis, inputStream);
+    }
+  }
+
+  /**
+   * Close the Closeable objects and <b>ignore</b> any {@link IOException} or
+   * null pointers. Must only be used for cleanup in exception handlers.
+   *
+   * @param closeables the objects to close
+   */
+  private static void cleanup(java.io.Closeable... closeables) {
+    for (java.io.Closeable c : closeables) {
+      if (c != null) {
+        try {
+          c.close();
+        } catch (IOException e) {
+          LOG.debug("Exception in closing " + c, e);
+
+        }
+      }
+    }
+  }
+
+  private static void unpackEntries(TarArchiveInputStream tis,
+                                    TarArchiveEntry entry, File outputDir) throws IOException {
+    if (entry.isDirectory()) {
+      File subDir = new File(outputDir, entry.getName());
+      if (!subDir.mkdirs() && !subDir.isDirectory()) {
+        throw new IOException("Mkdirs failed to create tar internal dir "
+                + outputDir);
+      }
+      for (TarArchiveEntry e : entry.getDirectoryEntries()) {
+        unpackEntries(tis, e, subDir);
+      }
+      return;
+    }
+    File outputFile = new File(outputDir, entry.getName());
+    if (!outputFile.getParentFile().exists()) {
+      if (!outputFile.getParentFile().mkdirs()) {
+        throw new IOException("Mkdirs failed to create tar internal dir "
+                + outputDir);
+      }
+    }
+    int count;
+    byte data[] = new byte[2048];
+    BufferedOutputStream outputStream = new BufferedOutputStream(
+            new FileOutputStream(outputFile));
+
+    while ((count = tis.read(data)) != -1) {
+      outputStream.write(data, 0, count);
+    }
+    outputStream.flush();
+    outputStream.close();
+  }
+
+  // java equivalent of util.on-windows?
+  public static boolean onWindows() {
+    return System.getenv("OS") == "Windows_NT";
+  }
+
+  public static long unpack(File localrsrc, File dst) throws IOException {
+    String lowerDst = localrsrc.getName().toLowerCase();
+    if (lowerDst.endsWith(".jar")) {
+      unJar(localrsrc, dst);
+    } else if (lowerDst.endsWith(".zip")) {
+      unZip(localrsrc, dst);
+    } else if (lowerDst.endsWith(".tar.gz") ||
+            lowerDst.endsWith(".tgz") ||
+            lowerDst.endsWith(".tar")) {
+      unTar(localrsrc, dst);
+    } else {
+      LOG.warn("Cannot unpack " + localrsrc);
+      if (!localrsrc.renameTo(dst)) {
+        throw new IOException("Unable to rename file: [" + localrsrc
+                + "] to [" + dst + "]");
+      }
+    }
+    if (localrsrc.isFile())
+    {
+      localrsrc.delete();
+    }
+    return 0;
+  }
+
+  public static boolean canUserReadBlob(ReadableBlobMeta meta, String user) {
+    SettableBlobMeta settable = meta.get_settable();
+    for (AccessControl acl : settable.get_acl()) {
+      if (acl.get_type().equals(AccessControlType.OTHER) && (acl.get_access() & BlobStoreAclHandler.READ) > 0) {
+        return true;
+      }
+      if (acl.get_name().equals(user) && (acl.get_access() & BlobStoreAclHandler.READ) > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
 
     public static CuratorFramework newCurator(Map conf, List<String> servers, Object port, String root) {
         return newCurator(conf, servers, port, root, null);
@@ -614,6 +1105,38 @@ public class Utils {
         return ret;
     }
 
+    /**
+     * Takes an input dir or file and returns the du on that local directory. Very basic
+     * implementation.
+     *
+     * @param dir The input dir to get the disk space of this local dir
+     * @return The total disk space of the input local directory
+     */
+   public static long getDU(File dir) {
+      long size = 0;
+      if (!dir.exists())
+        return 0;
+      if (!dir.isDirectory()) {
+        return dir.length();
+      } else {
+        File[] allFiles = dir.listFiles();
+        if(allFiles != null) {
+          for (int i = 0; i < allFiles.length; i++) {
+            boolean isSymLink;
+            try {
+              isSymLink = org.apache.commons.io.FileUtils.isSymlink(allFiles[i]);
+            } catch(IOException ioe) {
+              isSymLink = true;
+            }
+            if(!isSymLink) {
+              size += getDU(allFiles[i]);
+            }
+          }
+        }
+        return size;
+      }
+    }
+
    public static String threadDump() {
        final StringBuilder dump = new StringBuilder();
        final java.lang.management.ThreadMXBean threadMXBean =  java.lang.management.ManagementFactory.getThreadMXBean();
@@ -635,6 +1158,9 @@ public class Utils {
        return dump.toString();
    }
 
+  public static String constructVersionFileName(String fileName) {
+    return fileName + Utils.DEFAULT_BLOB_VERSION_SUFFIX;
+  }
     // Assumes caller is synchronizing
     private static SerializationDelegate getSerializationDelegate(Map stormConf) {
         String delegateClassName = (String)stormConf.get(Config.STORM_META_SERIALIZATION_DELEGATE);
@@ -670,6 +1196,12 @@ public class Utils {
         throw (Error) t;
       }
     }
+  }
+
+  public static ClientBlobStore getClientBlobStore(Map conf) {
+    ClientBlobStore store = (ClientBlobStore) newInstance((String)conf.get(Config.CLIENT_BLOBSTORE));
+    store.prepare(conf);
+    return store;
   }
 }
 

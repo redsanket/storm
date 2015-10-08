@@ -129,6 +129,13 @@
           ))
       )))
 
+(defn delete-node-blobstore
+  [^CuratorFramework zk ^String parent-path ^String host-port-info]
+  (let [parent-path (normalize-path parent-path)
+        child-path-list (.getChildren zk parent-path false)]
+    (doseq [child child-path-list]
+      (if (.startsWith child host-port-info)
+        (delete-node zk child)))))
 
 (defn sync-path
   [^CuratorFramework zk ^String path]
@@ -244,7 +251,7 @@
                           "] local-topology-ids [" (clojure.string/join "," local-topology-ids)
                           "] diff-topology [" (clojure.string/join "," diff-topology) "]")
         (if (empty? diff-topology)
-          (log-message "Accepting leadership, all active topology found localy.")
+          (log-message "Accepting leadership, all active topology found locally.")
           (do
             (log-message "code for all active topologies not available locally, giving up leadership.")
             (.close leader-latch)))))

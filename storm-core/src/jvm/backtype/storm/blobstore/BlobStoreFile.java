@@ -17,14 +17,14 @@
  */
 package backtype.storm.blobstore;
 
+import backtype.storm.generated.SettableBlobMeta;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.regex.Pattern;
-
-import backtype.storm.generated.SettableBlobMeta;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Provides an base implementation for creating a blobstore based on file backed storage.

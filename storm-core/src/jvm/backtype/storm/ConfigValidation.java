@@ -175,6 +175,13 @@ public class ConfigValidation {
     public static Object MapOfStringToNumberValidator = mapFv(String.class, Number.class, true);
 
     /**
+     * Validates a map of Strings to Map of Strings to Objects.
+     */
+    public static Object MapOfStringToMapOfStringToObjectValidator = mapFv(fv(String.class, false),
+            mapFv(String.class, Object.class, true), true);
+
+
+  /**
      * Validates a map of Strings to a map of Strings to a list.
      * {str -> {str -> [str,str]}
      */

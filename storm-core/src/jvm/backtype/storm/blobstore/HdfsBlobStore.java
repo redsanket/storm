@@ -17,36 +17,27 @@
  */
 package backtype.storm.blobstore;
 
-import static backtype.storm.blobstore.BlobStoreAclHandler.ADMIN;
-import static backtype.storm.blobstore.BlobStoreAclHandler.READ;
-import static backtype.storm.blobstore.BlobStoreAclHandler.WRITE;
-
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.FileNotFoundException;
-import java.io.InputStream;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
-import java.util.Iterator;
-import java.util.Map;
-import javax.security.auth.Subject;
-
+import backtype.storm.Config;
+import backtype.storm.generated.*;
 import backtype.storm.utils.Utils;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.thrift.TBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import backtype.storm.Config;
-import backtype.storm.generated.AuthorizationException;
-import backtype.storm.generated.KeyNotFoundException;
-import backtype.storm.generated.KeyAlreadyExistsException;
-import backtype.storm.generated.ReadableBlobMeta;
-import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
+import javax.security.auth.Subject;
+import java.io.ByteArrayOutputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Iterator;
+import java.util.Map;
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
+import static backtype.storm.blobstore.BlobStoreAclHandler.*;
 
 /**
  * Provides a HDFS file system backed blob store implementation.

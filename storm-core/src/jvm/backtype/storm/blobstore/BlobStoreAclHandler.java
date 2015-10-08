@@ -17,25 +17,20 @@
  */
 package backtype.storm.blobstore;
 
-import java.security.Principal;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import javax.security.auth.Subject;
-
 import backtype.storm.Config;
 import backtype.storm.generated.AccessControl;
 import backtype.storm.generated.AccessControlType;
 import backtype.storm.generated.AuthorizationException;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.security.auth.NimbusPrincipal;
 import backtype.storm.security.auth.AuthUtils;
 import backtype.storm.security.auth.IPrincipalToLocal;
+import backtype.storm.security.auth.NimbusPrincipal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.security.auth.Subject;
+import java.security.Principal;
+import java.util.*;
 
 /**
  * Provides common handling of acls for Blobstores.

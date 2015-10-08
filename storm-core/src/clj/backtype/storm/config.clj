@@ -142,6 +142,18 @@
     (FileUtils/forceMkdir (File. ret))
     ret))
 
+(defn master-stormjar-key
+  [topology-id]
+  (str topology-id "-stormjar.jar"))
+
+(defn master-stormcode-key
+  [topology-id]
+  (str topology-id "-stormcode.ser"))
+
+(defn master-stormconf-key
+  [topology-id]
+  (str topology-id "-stormconf.ser"))
+
 (defn master-stormdist-root
   ([conf]
    (str (master-local-dir conf) file-path-separator "stormdist"))
