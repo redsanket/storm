@@ -21,6 +21,8 @@ import backtype.storm.Config;
 import backtype.storm.blobstore.*;
 import backtype.storm.generated.*;
 import backtype.storm.localizer.Localizer;
+import backtype.storm.nimbus.NimbusInfo;
+import backtype.storm.security.auth.NimbusPrincipal;
 import backtype.storm.serialization.DefaultSerializationDelegate;
 import backtype.storm.serialization.SerializationDelegate;
 import clojure.lang.IFn;
@@ -34,6 +36,7 @@ import org.apache.thrift.TBase;
 import org.apache.thrift.TDeserializer;
 import org.apache.thrift.TException;
 import org.apache.thrift.TSerializer;
+import org.apache.thrift.transport.TTransportException;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Id;
@@ -44,6 +47,7 @@ import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
+import javax.security.auth.Subject;
 import java.io.*;
 import java.net.URL;
 import java.net.URLDecoder;
@@ -1195,6 +1199,80 @@ public class Utils {
         //Running in daemon mode, we would pass Error to calling thread.
         throw (Error) t;
       }
+    }
+  }
+
+  public static CuratorFramework createZKClient(Map conf) {
+    List<String> zkServers = (List<String>) conf.get(Config.STORM_ZOOKEEPER_SERVERS);
+    int port = (Integer) conf.get(Config.STORM_ZOOKEEPER_PORT);
+    ZookeeperAuthInfo zkAuthInfo = new ZookeeperAuthInfo(conf);
+    CuratorFramework zkClient = newCurator(conf, zkServers, port, (String) conf.get(Config.STORM_ZOOKEEPER_ROOT), zkAuthInfo);
+    zkClient.start();
+    return zkClient;
+  }
+
+  public static Subject getNimbusSubject() {
+      Subject subject = new Subject();
+      subject.getPrincipals().add(new NimbusPrincipal());
+      return subject;
+  }
+
+  // Check for latest version of a key inside zookeeper and return nimbodes containing the latest version
+  public static synchronized List<NimbusInfo> getNimbodesWithLatestVersionOfBlob(CuratorFramework zkClient, String key) throws Exception{
+    List<String> stateInfo = zkClient.getChildren().forPath("/blobstore/" + key);
+    List<NimbusInfo> nimbusInfoList = new ArrayList<NimbusInfo>();
+    Long version = getLatestVersion(stateInfo);
+    // Get the nimbodes with the latest version
+    for(String state : stateInfo) {
+      String[] nimbusKeyVersionInfo = state.split(":");
+      if (version != null && version == Long.parseLong(nimbusKeyVersionInfo[2])) {
+        nimbusInfoList.add(NimbusInfo.parse(nimbusKeyVersionInfo[1]));
+      }
+    }
+    return nimbusInfoList;
+  }
+
+  // Get version details from latest version of the blob
+  public static Long getLatestVersion (List<String> stateInfo) {
+    Long version = 0l;
+    // Get latest version of the blob present in the zookeeper --> possible to refactor this piece of code
+    for(String state : stateInfo) {
+      String[] nimbusKeyVersionInfo = state.split(":");
+      if (nimbusKeyVersionInfo.length == 3 && version < Long.parseLong(nimbusKeyVersionInfo[2])) {
+        version = Long.parseLong(nimbusKeyVersionInfo[2]);
+      }
+    }
+    LOG.info("Latest Version {}", version);
+    return version;
+  }
+
+  // Download blob from potential nimbodes
+  // it will be good to analyze the exact critical sections and make a synchronized block instead of a method
+  public static synchronized void downloadBlob(Map conf, BlobStore blobStore, String key, List<NimbusInfo> nimbusInfos) throws TTransportException {
+    NimbusClient client = null;
+    Boolean isSuccess = false;
+    LOG.info("NimbusInfos {}", nimbusInfos);
+    for (NimbusInfo nimbusInfo : nimbusInfos) {
+      try {
+        client = new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null);
+        ReadableBlobMeta rbm = client.getClient().getBlobMeta(key); // Check getConfiguredClient if this does not work
+        blobStore.setBlobMeta(key, rbm.get_settable(), Utils.getNimbusSubject());
+        ClientBlobStore remoteBlobStore = new NimbusBlobStore();
+        remoteBlobStore.setClient(conf, client); //Change this method to accomodate remote client connection
+        InputStreamWithMeta in = remoteBlobStore.getBlob(key);
+        blobStore.createBlob(key, in, rbm.get_settable(), Utils.getNimbusSubject());
+        // client downloads blobs
+        // if key already exists while creating the blob check for version of the blob, if version  does not match update it
+        // and add a log debug statement here
+        isSuccess = true;
+      } catch (Exception e) {
+        LOG.info("Exception, {}", e); // Exception handling is important
+        throw new RuntimeException("Could not download blobs");
+      }
+    }
+
+    if (isSuccess != true) {
+      throw new RuntimeException("Could not download blobs");
     }
   }
 

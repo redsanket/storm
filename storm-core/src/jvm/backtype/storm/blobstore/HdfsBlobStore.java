@@ -19,6 +19,7 @@ package backtype.storm.blobstore;
 
 import backtype.storm.Config;
 import backtype.storm.generated.*;
+import backtype.storm.utils.NimbusClient;
 import backtype.storm.utils.Utils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;

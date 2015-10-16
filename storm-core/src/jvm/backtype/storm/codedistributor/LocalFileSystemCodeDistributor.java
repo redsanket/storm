@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static backtype.storm.Config.*;
+import backtype.storm.Config;
 import static backtype.storm.utils.Utils.downloadFromHost;
 import static backtype.storm.utils.Utils.newCurator;
 
@@ -27,10 +27,10 @@ public class LocalFileSystemCodeDistributor implements ICodeDistributor {
     @Override
     public void prepare(Map conf) throws Exception {
         this.conf = conf;
-        List<String> zkServers = (List<String>) conf.get(STORM_ZOOKEEPER_SERVERS);
-        int port = (Integer) conf.get(STORM_ZOOKEEPER_PORT);
+        List<String> zkServers = (List<String>) conf.get(Config.STORM_ZOOKEEPER_SERVERS);
+        int port = (Integer) conf.get(Config.STORM_ZOOKEEPER_PORT);
         ZookeeperAuthInfo zkAuthInfo = new ZookeeperAuthInfo(conf);
-        zkClient = newCurator(conf, zkServers, port, (String) conf.get(STORM_ZOOKEEPER_ROOT), zkAuthInfo);
+        zkClient = newCurator(conf, zkServers, port, (String) conf.get(Config.STORM_ZOOKEEPER_ROOT), zkAuthInfo);
         zkClient.start();
     }
 

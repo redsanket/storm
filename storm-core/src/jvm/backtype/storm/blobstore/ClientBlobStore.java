@@ -17,8 +17,11 @@
  */
 package backtype.storm.blobstore;
 
+import backtype.storm.Config;
 import backtype.storm.daemon.Shutdownable;
 import backtype.storm.generated.*;
+import backtype.storm.utils.NimbusClient;
+import backtype.storm.utils.Utils;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -39,6 +42,7 @@ public abstract class ClientBlobStore implements Shutdownable {
   public abstract void stopWatchingBlob(String key) throws AuthorizationException;
   public abstract BlobReplication getBlobReplication(String Key) throws AuthorizationException, KeyNotFoundException;
   public abstract BlobReplication updateBlobReplication(String Key, int replication) throws AuthorizationException, KeyNotFoundException;
+  public abstract boolean setClient(Map conf, NimbusClient client);
 
   public final AtomicOutputStream createBlob(String key, SettableBlobMeta meta) throws AuthorizationException, KeyAlreadyExistsException {
     if (meta !=null && meta.is_set_acl()) {
@@ -53,5 +57,6 @@ public abstract class ClientBlobStore implements Shutdownable {
       }
     setBlobMetaToExtend(key, meta);
   }
+
 
 }

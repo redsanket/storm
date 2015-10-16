@@ -1,6 +1,9 @@
 package backtype.storm.blobstore;
 
+import backtype.storm.Config;
 import backtype.storm.generated.*;
+import backtype.storm.utils.NimbusClient;
+import backtype.storm.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,6 +86,11 @@ public class HdfsClientBlobStore extends ClientBlobStore {
   @Override
   public BlobReplication updateBlobReplication(String key, int replication) throws AuthorizationException, KeyNotFoundException {
     return _blobStore.updateBlobReplication(key, replication, null);
+  }
+
+  @Override
+  public boolean setClient(Map conf, NimbusClient client) {
+    return true;
   }
 
   @Override

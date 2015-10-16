@@ -20,6 +20,8 @@ package backtype.storm.blobstore;
 import backtype.storm.Config;
 import backtype.storm.generated.*;
 import backtype.storm.utils.Utils;
+import backtype.storm.utils.ZookeeperAuthInfo;
+import org.apache.curator.framework.CuratorFramework;
 import org.apache.thrift.TBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,9 +29,11 @@ import org.slf4j.LoggerFactory;
 import javax.security.auth.Subject;
 import java.io.*;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 import static backtype.storm.blobstore.BlobStoreAclHandler.*;
+import static backtype.storm.utils.Utils.newCurator;
 
 /**
  * Provides a local file system backed blob store implementation for Nimbus.
@@ -40,9 +44,11 @@ public class LocalFsBlobStore extends BlobStore {
   private static final String META_PREFIX = "meta_";
   protected BlobStoreAclHandler _aclHandler;
   private FileBlobStoreImpl fbs;
+  private CuratorFramework zkClient;
 
   @Override
   public void prepare(Map conf, String overrideBase) {
+    zkClient = Utils.createZKClient(conf);
     if (overrideBase == null) {
       overrideBase = (String)conf.get(Config.BLOBSTORE_DIR);
       if (overrideBase == null) {
@@ -56,7 +62,12 @@ public class LocalFsBlobStore extends BlobStore {
       throw new RuntimeException(e);
     }
     _aclHandler = new BlobStoreAclHandler(conf);
-
+    // Starting up the sync thread zookeeper client and launching the thread
+    SyncBlob sync = new SyncBlob(this, conf, Utils.createZKClient(conf));
+    new Thread(sync).start();
+    // Starting up the clean thread zookeeper client and launching the thread
+    CleanBlobState cleanBlobState = new CleanBlobState(this, conf, Utils.createZKClient(conf));
+    new Thread(cleanBlobState).start();
   }
 
   @Override
@@ -214,10 +225,11 @@ public class LocalFsBlobStore extends BlobStore {
   }
 
   @Override
-  public BlobReplication getBlobReplication(String key, Subject who) {
-    return new BlobReplication(1);
+  public BlobReplication getBlobReplication(String key, Subject who) throws Exception {
+      return new BlobReplication(zkClient.getChildren().forPath("/blobstore/" + key).size());
   }
 
+  // deal with this later
   @Override
   public BlobReplication updateBlobReplication(String key, int replication, Subject who) {
     return new BlobReplication(1);

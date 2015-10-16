@@ -14,7 +14,9 @@
 ;; See the License for the specific language governing permissions and
 ;; limitations under the License.
 (ns backtype.storm.daemon.nimbus
-  (:import [org.apache.thrift.server THsHaServer THsHaServer$Args])
+  (:import [org.apache.thrift.server THsHaServer THsHaServer$Args]
+           [backtype.storm.generated KeyNotFoundException]
+           [backtype.storm.blobstore BlobDownloader])
   (:import [org.apache.thrift.protocol TBinaryProtocol TBinaryProtocol$Factory])
   (:import [org.apache.thrift.exception])
   (:import [org.apache.thrift.transport TNonblockingServerTransport TNonblockingServerSocket])
@@ -788,6 +790,27 @@
 (defn- to-worker-slot [[node port]]
   (WorkerSlot. node port))
 
+
+(defn- get-key-list-from-ids [topology-ids]
+  (into #{} (for [id topology-ids])))
+
+;; Doubting this method, check clojure syntax
+(defn- download-missing-blobs [nimbus conf]
+  (let [storm-cluster-state (:storm-cluster-state nimbus)
+        topology-ids (set (.active-storms storm-cluster-state))
+        blob-store (:blob-store nimbus)
+        list-of-keys-from-ids (get-key-list-from-ids topology-ids)
+        blob-store-key-list (set (.listKeys blob-store (get-nimbus-subject)))
+        missing-key-list (ArrayList.)]
+    (doseq [key list-of-keys]
+       (try
+        (.getBlobMeta blob-store key)
+      (catch KeyNotFoundException e
+        (.add missing-key-list key))))
+    (log-message "Missing-Key-List" missing-key-list)
+    (doto (BlobDownloader.)
+          (.downloadBlobs blob-store missing-key-list conf))))
+
 ;; get existing assignment (just the executor->node+port map) -> default to {}
 ;; filter out ones which have a executor timeout
 ;; figure out available slots on cluster. add to that the used valid slots to get total slots. figure out how many executors should be in each slot (e.g., 4, 4, 4, 5)
@@ -800,6 +823,19 @@
         ^INimbus inimbus (:inimbus nimbus)
         ;; read all the topologies
         topology-ids (.active-storms storm-cluster-state)
+        _ (download-missing-blobs nimbus conf)
+        ;; get blob keys related to all topologies inside the blobstore
+          ;; connect to blob-store for keys
+          ;; Probably do that by creating an api
+          ;; The api should download all specific keys
+          ;; Also make sure the blob keys when it hits client blobstore
+          ;; and use the same api to find keys from other nimbodes
+          ;; If not found then propogate the key not found exception else so not do that.
+          ;; we might have to do a atomic read and write
+          ;; replicate the same thing with sync blob
+          ;; Also clean the list of all topologies that are not on zookeeper when it comes up
+          ;; Get the missing keys for all the topologies
+
         topologies (into {} (for [tid topology-ids]
                               {tid (read-topology-details nimbus tid)}))
         topologies (Topologies. topologies)
@@ -931,17 +967,15 @@
   ([nimbus storm-name storm-conf operation]
      (check-authorization! nimbus storm-name storm-conf operation (ReqContext/context))))
 
-(defn code-ids [conf]
-  (-> conf
-      master-stormdist-root
-      read-dir-contents
-      set
-      ))
+(defn code-ids [blob-store]
+  (let [to-id (reify KeyFilter
+                (filter [this key] (get-id-from-blob-key key)))]
+    (set (.filterAndListKeys blob-store to-id nil))))
 
-(defn cleanup-storm-ids [conf storm-cluster-state]
+(defn cleanup-storm-ids [conf storm-cluster-state blob-store]
   (let [heartbeat-ids (set (.heartbeat-storms storm-cluster-state))
         error-ids (set (.error-topologies storm-cluster-state))
-        code-ids (code-ids conf)
+        code-ids (code-ids blob-store)
         assigned-ids (set (.active-storms storm-cluster-state))]
     (set/difference (set/union heartbeat-ids error-ids code-ids) assigned-ids)
     ))
@@ -1002,20 +1036,32 @@
             TOPOLOGY-EVENTLOGGER-EXECUTORS (total-conf TOPOLOGY-EVENTLOGGER-EXECUTORS)
             TOPOLOGY-MAX-TASK-PARALLELISM (total-conf TOPOLOGY-MAX-TASK-PARALLELISM)})))
 
+(defn blob-rm [blob-store key]
+  (try
+    (.deleteBlob blob-store key (get-nimbus-subject))
+    (catch Exception e)))
+
+(defn rm-from-blob-store [id blob-store]
+  (blob-rm blob-store (master-stormjar-key id))
+  (blob-rm blob-store (master-stormconf-key id))
+  (blob-rm blob-store (master-stormcode-key id)))
+
 (defn do-cleanup [nimbus]
   (if (is-leader nimbus :throw-exception false)
     (let [storm-cluster-state (:storm-cluster-state nimbus)
           conf (:conf nimbus)
-          submit-lock (:submit-lock nimbus)]
+          submit-lock (:submit-lock nimbus)
+          blob-store (:blob-store nimbus)]
       (let [to-cleanup-ids (locking submit-lock
-                             (cleanup-storm-ids conf storm-cluster-state))]
+                             (cleanup-storm-ids conf storm-cluster-state blob-store))]
         (when-not (empty? to-cleanup-ids)
           (doseq [id to-cleanup-ids]
             (log-message "Cleaning up " id)
-            (if (:code-distributor nimbus) (.cleanup (:code-distributor nimbus) id))
+            ;(if (:code-distributor nimbus) (.cleanup (:code-distributor nimbus) id))
             (.teardown-heartbeats! storm-cluster-state id)
             (.teardown-topology-errors! storm-cluster-state id)
             (rmr (master-stormdist-root conf id))
+            (rm-from-blob-store id blob-store)
             (swap! (:heartbeats-cache nimbus) dissoc id))
           )))
     (log-message "not a leader, skipping cleanup")))
@@ -1035,17 +1081,16 @@
         (log-error "Cleaning inbox ... error deleting: " (.getName f))
         ))))
 
+;; Cleaning up corrupt topologies is a challange
 (defn cleanup-corrupt-topologies! [nimbus]
-  (if (is-leader nimbus :throw-exception false)
-    (let [storm-cluster-state (:storm-cluster-state nimbus)
-          code-ids (set (code-ids (:conf nimbus)))
-          active-topologies (set (.active-storms storm-cluster-state))
-          corrupt-topologies (set/difference active-topologies code-ids)]
-      (doseq [corrupt corrupt-topologies]
-        (log-message "Corrupt topology " corrupt " has state on zookeeper but doesn't have a local dir on Nimbus. Cleaning up...")
-        (.remove-storm! storm-cluster-state corrupt)
-        )))
-  (log-message "not a leader, skipping cleanup-corrupt-topologies"))
+  (let [storm-cluster-state (:storm-cluster-state nimbus)
+        code-ids (set (code-ids (:blob-store nimbus)))
+        active-topologies (set (.active-storms storm-cluster-state))
+        corrupt-topologies (set/difference active-topologies code-ids)]
+    (doseq [corrupt corrupt-topologies]
+      (log-message "Corrupt topology " corrupt " has state on zookeeper but doesn't have a local dir on Nimbus. Cleaning up...")
+      (.remove-storm! storm-cluster-state corrupt)
+      )))
 
 ;;setsup code distributor entries for all current topologies for which code is available locally.
 (defn setup-code-distributor [nimbus]
@@ -1198,7 +1243,7 @@
     (setup-blobstore nimbus)
 
     ;register call back for code-distributor
-    (.code-distributor (:storm-cluster-state nimbus) (fn [] (sync-code conf nimbus)))
+    ;(.code-distributor (:storm-cluster-state nimbus) (fn [] (sync-code conf nimbus)))
     ;; add code to register blobstore
     (when (is-leader nimbus :throw-exception false)
       (doseq [storm-id (.active-storms (:storm-cluster-state nimbus))]
@@ -1220,12 +1265,12 @@
                           (clean-inbox (inbox nimbus) (conf NIMBUS-INBOX-JAR-EXPIRATION-SECS))
                           ))
     ;;schedule nimbus code sync thread to sync code from other nimbuses.
-    (schedule-recurring (:timer nimbus)
-      0
-      (conf NIMBUS-CODE-SYNC-FREQ-SECS)
-      (fn []
-        (sync-code conf nimbus)
-        ))
+;    (schedule-recurring (:timer nimbus)
+;      0
+;      (conf NIMBUS-CODE-SYNC-FREQ-SECS)
+;      (fn []
+;        (sync-code conf nimbus)
+;        ))
 
     (schedule-recurring (:timer nimbus)
                         0
@@ -1745,7 +1790,8 @@
         (.cleanup (:downloaders nimbus))
         (.cleanup (:uploaders nimbus))
         (.close (:leader-elector nimbus))
-        (if (:code-distributor nimbus) (.close (:code-distributor nimbus) (:conf nimbus)))
+;        (if (:code-distributor nimbus) (.close (:code-distributor nimbus) (:conf nimbus)))
+        ;; check if we need to shutdown the blob
         (log-message "Shut down master")
         )
       DaemonCommon

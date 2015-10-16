@@ -129,6 +129,8 @@
           ))
       )))
 
+;; Deletes the state inside the zookeeper for a key, for which the
+;; contents of the key starts with nimbus host port information
 (defn delete-node-blobstore
   [^CuratorFramework zk ^String parent-path ^String host-port-info]
   (let [parent-path (normalize-path parent-path)
@@ -236,6 +238,7 @@
     (.setLeader nimbus-info (.isLeader participant))
     nimbus-info))
 
+;; Remove this piece of code once everything runs, I do not think it is required to listen to the connection anyway now
 (defn leader-latch-listener-impl
   "Leader latch listener that will be invoked when we either gain or lose leadership"
   [conf zk leader-latch]
@@ -243,18 +246,20 @@
         STORMS-ROOT (str (conf STORM-ZOOKEEPER-ROOT) "/storms")]
     (reify LeaderLatchListener
       (^void isLeader[this]
-        (log-message (str hostname " gained leadership, checking if it has all the topology code locally."))
-        (let [active-topology-ids (set (get-children zk STORMS-ROOT false))
-              local-topology-ids (set (.list (File. (master-stormdist-root conf))))
-              diff-topology (first (set-delta active-topology-ids local-topology-ids))]
-        (log-message "active-topology-ids [" (clojure.string/join "," active-topology-ids)
-                          "] local-topology-ids [" (clojure.string/join "," local-topology-ids)
-                          "] diff-topology [" (clojure.string/join "," diff-topology) "]")
-        (if (empty? diff-topology)
-          (log-message "Accepting leadership, all active topology found locally.")
-          (do
-            (log-message "code for all active topologies not available locally, giving up leadership.")
-            (.close leader-latch)))))
+        (log-message (str hostname " gained leadership"))
+        true
+;        (let [active-topology-ids (set (get-children zk STORMS-ROOT false))
+;              local-topology-ids (set (.list (File. (master-stormdist-root conf))))
+;              diff-topology (first (set-delta active-topology-ids local-topology-ids))]
+;        (log-message "active-topology-ids [" (clojure.string/join "," active-topology-ids)
+;                          "] local-topology-ids [" (clojure.string/join "," local-topology-ids)
+;                          "] diff-topology [" (clojure.string/join "," diff-topology) "]")
+;        (if (empty? diff-topology)
+;          (log-message "Accepting leadership, all active topology found locally.")
+;          (do
+;            (log-message "code for all active topologies not available locally, giving up leadership.")
+;            (.close leader-latch))))
+        )
       (^void notLeader[this]
         (log-message (str hostname " lost leadership."))))))
 

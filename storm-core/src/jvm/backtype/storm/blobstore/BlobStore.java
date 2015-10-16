@@ -55,7 +55,7 @@ public abstract class BlobStore implements Shutdownable {
   public abstract void deleteBlob(String key, Subject who) throws AuthorizationException, KeyNotFoundException;
   public abstract InputStreamWithMeta getBlob(String key, Subject who) throws AuthorizationException, KeyNotFoundException;
   public abstract Iterator<String> listKeys(Subject who);
-  public abstract BlobReplication getBlobReplication(String key, Subject who) throws AuthorizationException, KeyNotFoundException, IOException;
+  public abstract BlobReplication getBlobReplication(String key, Subject who) throws Exception;
   public abstract BlobReplication updateBlobReplication(String key, int replication, Subject who) throws AuthorizationException, KeyNotFoundException, IOException;
 
   public <R> Set<R> filterAndListKeys(KeyFilter<R> filter, Subject who) {
