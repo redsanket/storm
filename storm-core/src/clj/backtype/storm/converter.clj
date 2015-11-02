@@ -179,7 +179,6 @@
     (.set_samplingpct (get options :samplingpct 10))))
 
 (defn thriftify-storm-base [storm-base]
-  (log-message "storm-base" storm-base)
   (doto (StormBase.)
     (.set_name (:storm-name storm-base))
     (.set_launch_time_secs (int (:launch-time-secs storm-base)))

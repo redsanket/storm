@@ -1351,12 +1351,12 @@
 
     ;; Schedule nimbus code sync thread to sync code from other nimbuses.
     (if (instance? LocalFsBlobStore blob-store)
-    (schedule-recurring (:timer nimbus)
-                        0
-                        (conf NIMBUS-CODE-SYNC-FREQ-SECS)
-                        (fn []
-                          (blob-sync-code conf nimbus)
-                          )))
+      (schedule-recurring (:timer nimbus)
+                          0
+                          (conf NIMBUS-CODE-SYNC-FREQ-SECS)
+                          (fn []
+                            (blob-sync-code conf nimbus)
+                            )))
 
     (schedule-recurring (:timer nimbus)
                         0
@@ -1368,7 +1368,7 @@
         [this ^String storm-name ^String uploadedJarLocation ^String serializedConf ^StormTopology topology
          ^SubmitOptions submitOptions]
         (try
-          (is-leader nimbus :throw-exception false)
+          (is-leader nimbus)
           (assert (not-nil? submitOptions))
           (validate-topology-name! storm-name)
           (check-authorization! nimbus storm-name nil "submitTopology")
