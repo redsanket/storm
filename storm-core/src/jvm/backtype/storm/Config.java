@@ -954,6 +954,128 @@ public class Config extends HashMap<String, Object> {
     public static final String SUPERVISOR_SLOTS_PORTS = "supervisor.slots.ports";
 
     /**
+     * What blobstore implementation the supervisor should use.
+     */
+    @isString
+    public static final String SUPERVISOR_BLOBSTORE = "supervisor.blobstore.class";
+    public static final Object SUPERVISOR_BLOBSTORE_SCHEMA = String.class;
+
+    /**
+     * The jvm opts provided to workers launched by this supervisor. All "%ID%" substrings are replaced
+     * with an identifier for this worker. Also, "%WORKER-ID%", "%STORM-ID%" and "%WORKER-PORT%" are
+     * replaced with appropriate runtime values for this worker.
+     * The distributed cache target size in MB. This is a soft limit to the size of the distributed
+     * cache contents.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String SUPERVISOR_LOCALIZER_CACHE_TARGET_SIZE_MB = "supervisor.localizer.cache.target.size.mb";
+
+    /**
+     * The distributed cache cleanup interval. Controls how often it scans to attempt to cleanup
+     * anything over the cache target size.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String SUPERVISOR_LOCALIZER_CACHE_CLEANUP_INTERVAL_MS = "supervisor.localizer.cleanup.interval.ms";
+
+    /**
+     * What blobstore implementation the storm client should use.
+     */
+    @isString
+    public static final String CLIENT_BLOBSTORE = "client.blobstore.class";
+    public static final Object CLIENT_BLOBSTORE_SCHEMA = String.class;
+
+    /**
+     * What blobstore download parallelism the supervisor should use.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String SUPERVISOR_BLOBSTORE_DOWNLOAD_THREAD_COUNT = "supervisor.blobstore.download.thread.count";
+
+    /**
+     * What blobstore download parallelism the supervisor should use.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String SUPERVISOR_BLOBSTORE_DOWNLOAD_MAX_RETRIES = "supervisor.blobstore.download.max_retries";
+
+    /**
+     * The blobstore super user has all read/write/admin permissions to all blobs - user running
+     * the blobstore.
+     */
+    @isString
+    public static final String BLOBSTORE_SUPERUSER = "blobstore.superuser";
+
+    /**
+     * What directory to use for the blobstore. The directory is expected to be an
+     * absolute path when using HDFS blobstore, for LocalFsBlobStore it could be either
+     * absolute or relative.
+     */
+    @isString
+    public static final String BLOBSTORE_DIR = "blobstore.dir";
+
+    /**
+     * What buffer size to use for the blobstore uploads.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String STORM_BLOBSTORE_INPUTSTREAM_BUFFER_SIZE_BYTES = "storm.blobstore.inputstream.buffer.size.bytes";
+
+    /**
+     * Enable the blobstore cleaner. Certain blobstores may only want to run the cleaner
+     * on one daemon. Currently Nimbus handles setting this.
+     */
+    @isBoolean
+    public static final String BLOBSTORE_CLEANUP_ENABLE = "blobstore.cleanup.enable";
+
+    /**
+     * principal for nimbus/supervisor to use to access secure hdfs for the blobstore.
+     */
+    @isString
+    public static final String BLOBSTORE_HDFS_PRINCIPAL = "blobstore.hdfs.principal";
+
+    /**
+     * keytab for nimbus/supervisor to use to access secure hdfs for the blobstore.
+     */
+    @isString
+    public static final String BLOBSTORE_HDFS_KEYTAB = "blobstore.hdfs.keytab";
+
+    /**
+     *  Set replication factor for a blob in HDFS Blobstore Implementation
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String BLOBSTORE_REPLICATION_FACTOR = "blobstore.replication.factor";
+
+    /**
+     * What blobstore implementation nimbus should use.
+     */
+    @isString
+    public static final String NIMBUS_BLOBSTORE = "nimbus.blobstore.class";
+
+    /**
+     * During operations with the blob store, via master, how long a connection
+     * is idle before nimbus considers it dead and drops the session and any
+     * associated connections.
+     */
+    @isPositiveNumber
+    @isInteger
+    public static final String NIMBUS_BLOBSTORE_EXPIRATION_SECS = "nimbus.blobstore.expiration.secs";
+
+  /**
+   * A map with blobstore keys mapped to each filename the worker will have access to in the
+   * launch directory to the blob by local file name and uncompress flag. Both localname and
+   * uncompress flag are optional. It uses the key is localname is not specified. Each topology
+   * will have different map of blobs.  Example: topology.blobstore.map: {"blobstorekey" :
+   * {"localname": "myblob", "uncompress": false}, {"blobstorearchivekey" :
+   * {"localname": "myarchive", "uncompress": true}}
+   */
+  public static final String TOPOLOGY_BLOBSTORE_MAP = "topology.blobstore.map";
+  public static final Object TOPOLOGY_BLOBSTORE_MAP_SCHEMA =
+          ConfigValidation.MapOfStringToMapOfStringToObjectValidator;
+
+  /**
      * A number representing the maximum number of workers any single topology can acquire.
      */
     @isInteger

@@ -14,7 +14,7 @@
 ;; See the License for the specific language governing permissions and
 ;; limitations under the License.
 (ns backtype.storm.daemon.supervisor
-  (:import [java.io OutputStreamWriter BufferedWriter IOException])
+  (:import [java.io OutputStreamWriter BufferedWriter IOException FileOutputStream])
   (:import [backtype.storm.scheduler ISupervisor]
            [backtype.storm.utils LocalState Time Utils]
            [backtype.storm.daemon Shutdownable]
@@ -24,22 +24,27 @@
            [org.apache.commons.io FileUtils]
            [java.io File])
   (:use [backtype.storm config util log timer local-state])
+  (:import [backtype.storm.generated AuthorizationException KeyNotFoundException WorkerResources])
+  (:import [java.util.concurrent Executors])
   (:import [backtype.storm.utils VersionInfo])
+  (:import [java.nio.file Files Path Paths StandardCopyOption])
+  (:import [backtype.storm.blobstore BlobStoreAclHandler])
   (:import [backtype.storm Config])
   (:import [backtype.storm.generated WorkerResources])
+  (:import [backtype.storm.localizer LocalResource])
   (:use [backtype.storm.daemon common])
   (:require [backtype.storm.daemon [worker :as worker]]
             [backtype.storm [process-simulator :as psim] [cluster :as cluster] [event :as event]]
             [clojure.set :as set])
   (:import [org.apache.zookeeper data.ACL ZooDefs$Ids ZooDefs$Perms])
   (:import [org.yaml.snakeyaml Yaml]
-           [org.yaml.snakeyaml.constructor SafeConstructor])
+           [org.yaml.snakeyaml.constructor SafeConstructor]
+           [java.util Date])
   (:gen-class
     :methods [^{:static true} [launch [backtype.storm.scheduler.ISupervisor] void]]))
 
 (defmulti download-storm-code cluster-mode)
 (defmulti launch-worker (fn [supervisor & _] (cluster-mode (:conf supervisor))))
-(defmulti mk-code-distributor cluster-mode)
 
 (defprotocol SupervisorDaemon
   (get-id [this])
@@ -314,15 +319,27 @@
                                          (log-error t "Error when processing event")
                                          (exit-process! 20 "Error when processing an event")
                                          ))
+   :blob-update-timer (mk-timer :kill-fn (fn [t]
+                                           (log-error t "Error when processing blob-update")
+                                           (exit-process! 20 "Error when processing a blob-update")
+                                           ))
+   :localizer (Utils/createLocalizer conf (supervisor-local-dir conf))
    :assignment-versions (atom {})
    :sync-retry (atom 0)
-   :code-distributor (mk-code-distributor conf)
-   :download-lock (Object.)
    })
+
+(defn required-topo-files-exist?
+  [conf storm-id]
+  (let [stormroot (supervisor-stormdist-root conf storm-id)
+        stormjarpath (supervisor-stormjar-path stormroot)
+        stormcodepath (supervisor-stormcode-path stormroot)
+        stormconfpath (supervisor-stormconf-path stormroot)]
+    (and (every? exists-file? [stormroot stormconfpath stormcodepath])
+      (or (local-mode? conf)
+        (exists-file? stormjarpath)))))
 
 (defn sync-processes [supervisor]
   (let [conf (:conf supervisor)
-        download-lock (:download-lock supervisor)
         ^LocalState local-state (:local-state supervisor)
         storm-cluster-state (:storm-cluster-state supervisor)
         assigned-executors (defaulted (ls-local-assignments local-state) {})
@@ -359,65 +376,50 @@
          ". State: " state
          ", Heartbeat: " (pr-str heartbeat))
         (shutdown-worker supervisor id)
-        (if (:code-distributor supervisor)
-          (.cleanup (:code-distributor supervisor) id))
         ))
-
-    (doseq [id (vals new-worker-ids)]
-      (local-mkdirs (worker-pids-root conf id))
-      (local-mkdirs (worker-heartbeats-root conf id)))
-    (ls-approved-workers! local-state
-          (merge
-           (select-keys (ls-approved-workers local-state)
-                        (keys keepers))
-           (zipmap (vals new-worker-ids) (keys new-worker-ids))
-           ))
-
-    ;; check storm topology code dir exists before launching workers
-    (doseq [[port assignment] reassign-executors]
-      (let [downloaded-storm-ids (set (read-downloaded-storm-ids conf))
-            storm-id (:storm-id assignment)
-            cached-assignment-info @(:assignment-versions supervisor)
-            assignment-info (if (and (not-nil? cached-assignment-info) (contains? cached-assignment-info storm-id ))
-                              (get cached-assignment-info storm-id)
-                              (.assignment-info-with-version storm-cluster-state storm-id nil))
-	    storm-code-map (read-storm-code-locations assignment-info)
-            master-code-dir (if (contains? storm-code-map :data) (storm-code-map :data))
-            stormroot (supervisor-stormdist-root conf storm-id)]
-        (if-not (or (contains? downloaded-storm-ids storm-id) (.exists (File. stormroot)) (nil? master-code-dir))
-          (download-storm-code conf storm-id master-code-dir supervisor download-lock))
-        ))
-
-    (wait-for-workers-launch
-     conf
-     (dofor [[port assignment] reassign-executors]
-            (let [id (new-worker-ids port)
-                  storm-id (:storm-id assignment)
-                  ^WorkerResources resources (:resources assignment)
-                  mem-onheap (.get_mem_on_heap resources)]
-              (try
-                (log-message "Launching worker with assignment "
-                             (pr-str assignment)
-                             " for this supervisor "
-                             (:supervisor-id supervisor)
-                             " on port "
-                             port
-                             " with id "
-                             id
-                             )
-                (launch-worker supervisor
-                               (:storm-id assignment)
-                               port
-                               id
-                               mem-onheap)
-                (catch java.io.FileNotFoundException e
-                  (log-message "Unable to launch worker due to "
-                               (.getMessage e)))
-                (catch java.io.IOException e
-                  (log-message "Unable to launch worker due to "
-                               (.getMessage e))))
-         id)))
-    ))
+    (let [valid-new-worker-ids
+          (into {}
+            (remove nil?
+              (dofor [[port assignment] reassign-executors]
+                (let [id (new-worker-ids port)
+                      storm-id (:storm-id assignment)
+                      ^WorkerResources resources (:resources assignment)
+                      mem-onheap (.get_mem_on_heap resources)]
+                  ;; This condition checks for required files exist before launching the worker
+                  (if (required-topo-files-exist? conf storm-id)
+                    (do
+                      (log-message "Launching worker with assignment "
+                        (pr-str assignment)
+                        " for this supervisor "
+                        (:supervisor-id supervisor)
+                        " on port "
+                        port
+                        " with id "
+                        id)
+                      (local-mkdirs (worker-pids-root conf id))
+                      (local-mkdirs (worker-heartbeats-root conf id))
+                      (launch-worker supervisor
+                        (:storm-id assignment)
+                        port
+                        id
+                        mem-onheap)
+                      [port id])
+                    (do
+                      (log-message "Missing topology storm code, so can't launch worker with assignment "
+                        (pr-str assignment)
+                        " for this supervisor "
+                        (:supervisor-id supervisor)
+                        " on port "
+                        port
+                        " with id "
+                        id)
+                      nil))))))]
+      (ls-approved-workers! local-state
+                        (merge
+                          (select-keys (ls-approved-workers local-state)
+                            (keys keepers))
+                          (zipmap (vals valid-new-worker-ids) (keys valid-new-worker-ids))))
+      (wait-for-workers-launch conf (vals valid-new-worker-ids)))))
 
 (defn assigned-storm-ids-from-port-assignments [assignment]
   (->> assignment
@@ -440,10 +442,78 @@
       (shutdown-worker supervisor id))
     ))
 
+(defn get-blob-localname
+  "Given the blob information either gets the localname field if it exists,
+  else routines the default value passed in."
+  [blob-info defaultValue]
+  (if-let [val (if blob-info (get blob-info "localname") nil)] val defaultValue))
+
+(defn should-uncompress-blob?
+  "Given the blob information returns the value of the uncompress field, handling it either being
+  a string or a boolean value, or ifs its not specified then returns false"
+  [blob-info]
+  (boolean (and blob-info
+             (if-let [val (get blob-info "uncompress")]
+               (.booleanValue (Boolean. val))))))
+
+(defn remove-blob-references
+  "Remove a reference to a blob when its no longer needed."
+  [localizer storm-id conf]
+  (let [storm-conf (read-supervisor-storm-conf conf storm-id)
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        user (storm-conf TOPOLOGY-SUBMITTER-USER)
+        topo-name (storm-conf TOPOLOGY-NAME)]
+    (if blobstore-map (doseq [[k, v] blobstore-map]
+                        (.removeBlobReference localizer
+                          k
+                          user
+                          topo-name
+                          (should-uncompress-blob? v))))))
+
+(defn blobstore-map-to-localresources
+  "Returns a list of LocalResources based on the blobstore-map passed in."
+  [blobstore-map]
+  (if blobstore-map
+    (for [[k, v] blobstore-map] (LocalResource. k (should-uncompress-blob? v)))
+    ()))
+
+(defn add-blob-references
+  "For each of the downloaded topologies, adds references to the blobs that the topologies are
+  using. This is used to reconstruct the cache on restart."
+  [localizer storm-id conf]
+  (let [storm-conf (read-supervisor-storm-conf conf storm-id)
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        user (storm-conf TOPOLOGY-SUBMITTER-USER)
+        topo-name (storm-conf TOPOLOGY-NAME)
+        localresources (blobstore-map-to-localresources blobstore-map)]
+    (if blobstore-map (.addReferences localizer localresources user topo-name))))
+
+(defn rm-topo-files
+  [conf storm-id localizer rm-blob-refs?]
+  (try
+    (if (= true rm-blob-refs?)
+      (remove-blob-references localizer storm-id conf))
+    (if (conf SUPERVISOR-RUN-WORKER-AS-USER)
+      (rmr-as-user conf storm-id (supervisor-stormdist-root conf storm-id))
+      (rmr (supervisor-stormdist-root conf storm-id)))
+    (catch Exception e (log-message e (str "Exception removing: " storm-id)))))
+
+;; Method written to check for the files exists to avoid supervisor crashing
+;; Also makes sure there is no necessity for locking
+(defn verify-downloaded-files [conf localizer assigned-storm-ids all-downloaded-storm-ids]
+  (remove nil?
+    (into #{}
+      (for [storm-id all-downloaded-storm-ids
+            :let [rm-blob-refs? false]
+            :when (contains? assigned-storm-ids storm-id)]
+        (if (not (required-topo-files-exist? conf storm-id))
+          (do
+            (log-debug "Files not present in topology directory")
+            (rm-topo-files conf storm-id localizer rm-blob-refs?) storm-id))))))
+
 (defn mk-synchronize-supervisor [supervisor sync-processes event-manager processes-event-manager]
   (fn this []
     (let [conf (:conf supervisor)
-          download-lock (:download-lock supervisor)
           storm-cluster-state (:storm-cluster-state supervisor)
           ^ISupervisor isupervisor (:isupervisor supervisor)
           ^LocalState local-state (:local-state supervisor)
@@ -453,7 +523,7 @@
                                                                    storm-cluster-state sync-callback
                                                                   assignment-versions)
           storm-code-map (read-storm-code-locations assignments-snapshot)
-          downloaded-storm-ids (set (read-downloaded-storm-ids conf))
+          all-downloaded-storm-ids (set (read-downloaded-storm-ids conf))
           existing-assignment (ls-local-assignments local-state)
           all-assignment (read-assignments assignments-snapshot
                                            (:assignment-id supervisor)
@@ -461,13 +531,20 @@
                                            (:sync-retry supervisor))
           new-assignment (->> all-assignment
                               (filter-key #(.confirmAssigned isupervisor %)))
-          assigned-storm-ids (assigned-storm-ids-from-port-assignments new-assignment)]
+          rm-blob-refs? true
+          assigned-storm-ids (assigned-storm-ids-from-port-assignments new-assignment)
+          localizer (:localizer supervisor)
+          checked-downloaded-storm-ids (set (verify-downloaded-files conf localizer assigned-storm-ids all-downloaded-storm-ids))
+          downloaded-storm-ids (set/difference all-downloaded-storm-ids checked-downloaded-storm-ids)]
+
       (log-debug "Synchronizing supervisor")
       (log-debug "Storm code map: " storm-code-map)
-      (log-debug "Downloaded storm ids: " downloaded-storm-ids)
       (log-debug "All assignment: " all-assignment)
       (log-debug "New assignment: " new-assignment)
-
+      (log-debug "Assigned Storm Ids" assigned-storm-ids)
+      (log-debug "All Downloaded Ids" all-downloaded-storm-ids)
+      (log-debug "Checked Downloaded Ids" checked-downloaded-storm-ids)
+      (log-debug "Downloaded Ids" downloaded-storm-ids)
       ;; download code first
       ;; This might take awhile
       ;;   - should this be done separately from usual monitoring?
@@ -475,7 +552,9 @@
       (doseq [[storm-id master-code-dir] storm-code-map]
         (when (and (not (downloaded-storm-ids storm-id))
                    (assigned-storm-ids storm-id))
-          (download-storm-code conf storm-id master-code-dir supervisor download-lock)))
+          (log-message "Downloading code for storm id " storm-id)
+          (download-storm-code conf storm-id master-code-dir localizer)
+          (log-message "Finished downloading code for storm id " storm-id)))
 
       (log-debug "Writing new assignment "
                  (pr-str new-assignment))
@@ -508,6 +587,41 @@
   {Config/SUPERVISOR_MEMORY_CAPACITY_MB (double (conf SUPERVISOR-MEMORY-CAPACITY-MB))
    Config/SUPERVISOR_CPU_CAPACITY (double (conf SUPERVISOR-CPU-CAPACITY))})
 
+(defn update-blobs-for-topology!
+  "Update each blob listed in the topology configuration if the latest version of the blob
+   has not been downloaded."
+  [conf storm-id localizer]
+  (let [storm-conf (read-supervisor-storm-conf conf storm-id)
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        user (storm-conf TOPOLOGY-SUBMITTER-USER)
+        topo-name (storm-conf TOPOLOGY-NAME)
+        user-dir (.getLocalUserFileCacheDir localizer user)
+        localresources (blobstore-map-to-localresources blobstore-map)]
+    (try
+      (.updateBlobs localizer localresources user)
+      (catch AuthorizationException authExp
+        (log-error authExp))
+      (catch KeyNotFoundException knf
+        (log-error knf)))))
+
+(defn update-blobs-for-all-topologies-fn
+  "Returns a function that downloads all blobs listed in the topology configuration for all topologies assigned
+  to this supervisor, and creates version files with a suffix. The returned function is intended to be run periodically
+  by a timer, created elsewhere."
+  [supervisor]
+  (fn this []
+    (try
+      (let [conf (:conf supervisor)
+            downloaded-storm-ids (set (read-downloaded-storm-ids conf))
+            new-assignment @(:curr-assignment supervisor)
+            assigned-storm-ids (assigned-storm-ids-from-port-assignments new-assignment)]
+        (doseq [topology-id downloaded-storm-ids]
+          (let [storm-root (supervisor-stormdist-root conf topology-id)]
+            (when (assigned-storm-ids topology-id)
+              (log-debug "Checking Blob updates for storm topology id " topology-id " With target_dir: " storm-root)
+              (update-blobs-for-topology! conf topology-id (:localizer supervisor))))))
+      (catch Exception e (log-error e "Error updating blobs, will retry again later")))))
+
 ;; in local state, supervisor stores who its current assignments are
 ;; another thread launches events to restart any dead processes if necessary
 (defserverfn mk-supervisor [conf shared-context ^ISupervisor isupervisor]
@@ -518,6 +632,8 @@
         [event-manager processes-event-manager :as managers] [(event/event-manager false) (event/event-manager false)]
         sync-processes (partial sync-processes supervisor)
         synchronize-supervisor (mk-synchronize-supervisor supervisor sync-processes event-manager processes-event-manager)
+        synchronize-blobs-fn (update-blobs-for-all-topologies-fn supervisor)
+        downloaded-storm-ids (set (read-downloaded-storm-ids conf))
         heartbeat-fn (fn [] (.supervisor-heartbeat!
                                (:storm-cluster-state supervisor)
                                (:supervisor-id supervisor)
@@ -538,6 +654,11 @@
                         0
                         (conf SUPERVISOR-HEARTBEAT-FREQUENCY-SECS)
                         heartbeat-fn)
+    (doseq [storm-id downloaded-storm-ids] (add-blob-references (:localizer supervisor) storm-id
+                                             conf))
+    ;; do this after adding the references so we don't try to clean things being used
+    (.startCleaner (:localizer supervisor))
+
     (when (conf SUPERVISOR-ENABLE)
       ;; This isn't strictly necessary, but it doesn't hurt and ensures that the machine stays up
       ;; to date even if callbacks don't all work exactly right
@@ -546,6 +667,11 @@
                           0
                           (conf SUPERVISOR-MONITOR-FREQUENCY-SECS)
                           (fn [] (.add processes-event-manager sync-processes))))
+      ;; Blob update thread. Starts with 30 seconds delay, every 30 seconds
+      (schedule-recurring (:blob-update-timer supervisor)
+        30
+        30
+        (fn [] (.add event-manager synchronize-blobs-fn)))
     (log-message "Starting supervisor with id " (:supervisor-id supervisor) " at host " (:my-hostname supervisor))
     (reify
      Shutdownable
@@ -554,8 +680,10 @@
                (reset! (:active supervisor) false)
                (cancel-timer (:heartbeat-timer supervisor))
                (cancel-timer (:event-timer supervisor))
+               (cancel-timer (:blob-update-timer supervisor))
                (.shutdown event-manager)
                (.shutdown processes-event-manager)
+               (.shutdown (:localizer supervisor))
                (.disconnect (:storm-cluster-state supervisor)))
      SupervisorDaemon
      (get-conf [this]
@@ -584,25 +712,89 @@
  (if (conf SUPERVISOR-RUN-WORKER-AS-USER)
   (worker-launcher-and-wait conf (storm-conf TOPOLOGY-SUBMITTER-USER) ["code-dir" dir] :log-prefix (str "setup conf for " dir))))
 
+(defn setup-blob-permission [conf storm-conf path]
+  (if (conf SUPERVISOR-RUN-WORKER-AS-USER)
+    (worker-launcher-and-wait conf (storm-conf TOPOLOGY-SUBMITTER-USER) ["blob" path] :log-prefix (str "setup blob permissions for " path))))
+
+(defn setup-storm-code-dir [conf storm-conf dir]
+  (if (conf SUPERVISOR-RUN-WORKER-AS-USER)
+    (worker-launcher-and-wait conf (storm-conf TOPOLOGY-SUBMITTER-USER) ["code-dir" dir] :log-prefix (str "setup conf for " dir))))
+
+(defn download-blobs-for-topology!
+  "Download all blobs listed in the topology configuration for a given topology."
+  [conf stormconf-path localizer tmproot]
+  (let [storm-conf (read-supervisor-storm-conf-given-path conf stormconf-path)
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        user (storm-conf TOPOLOGY-SUBMITTER-USER)
+        topo-name (storm-conf TOPOLOGY-NAME)
+        user-dir (.getLocalUserFileCacheDir localizer user)
+        localresources (blobstore-map-to-localresources blobstore-map)]
+    (when localresources
+      (when-not (.exists user-dir)
+        (FileUtils/forceMkdir user-dir)
+        (setup-blob-permission conf storm-conf (.toString user-dir)))
+      (try
+        (let [localized-resources (.getBlobs localizer localresources user topo-name user-dir)]
+          (setup-blob-permission conf storm-conf (.toString user-dir))
+          (doseq [local-rsrc localized-resources]
+            (let [rsrc-file-path (File. (.getFilePath local-rsrc))
+                  key-name (.getName rsrc-file-path)
+                  blob-symlink-target-name (.getName (File. (.getCurrentSymlinkPath local-rsrc)))
+                  symlink-name (get-blob-localname (get blobstore-map key-name) key-name)]
+              (create-symlink! tmproot (.getParent rsrc-file-path) symlink-name
+                blob-symlink-target-name))))
+        (catch AuthorizationException authExp
+          (log-error authExp))
+        (catch KeyNotFoundException knf
+          (log-error knf))))))
+
+(defn get-blob-file-names
+  [blobstore-map]
+  (if blobstore-map
+    (for [[k, data] blobstore-map] (get-blob-localname data k))))
+
+(defn download-blobs-for-topology-succeed?
+  "Assert if all blobs are downloaded for the given topology"
+  [stormconf-path target-dir]
+  (let [storm-conf (clojurify-structure (Utils/fromCompressedJsonConf (FileUtils/readFileToByteArray (File. stormconf-path))))
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        file-names (get-blob-file-names blobstore-map)]
+    (if (and file-names (> (count file-names) 0))
+      (every? #(Utils/checkFileExists target-dir %) file-names)
+      true)))
+
 ;; distributed implementation
 (defmethod download-storm-code
-    :distributed [conf storm-id master-code-dir supervisor download-lock]
-    ;; Downloading to permanent location is atomic
-    (let [tmproot (str (supervisor-tmp-dir conf) file-path-separator (uuid))
-          stormroot (supervisor-stormdist-root conf storm-id)
-          master-meta-file-path (master-storm-metafile-path master-code-dir)
-          supervisor-meta-file-path (supervisor-storm-metafile-path tmproot)]
-      (locking download-lock
-        (log-message "Downloading code for storm id " storm-id " from " master-code-dir)
-        (FileUtils/forceMkdir (File. tmproot))
-        (Utils/downloadFromMaster conf master-meta-file-path supervisor-meta-file-path)
-        (if (:code-distributor supervisor)
-          (.download (:code-distributor supervisor) storm-id (File. supervisor-meta-file-path)))
-        (extract-dir-from-jar (supervisor-stormjar-path tmproot) RESOURCES-SUBDIR tmproot)
-        (if (.exists (File. stormroot)) (FileUtils/forceDelete (File. stormroot)))
-        (FileUtils/moveDirectory (File. tmproot) (File. stormroot))
-        (setup-storm-code-dir conf (read-supervisor-storm-conf conf storm-id) stormroot)
-        (log-message "Finished downloading code for storm id " storm-id " from " master-code-dir))))
+  :distributed [conf storm-id master-code-dir localizer]
+  ;; Downloading to permanent location is atomic
+  (let [tmproot (str (supervisor-tmp-dir conf) file-path-separator (uuid))
+        stormroot (supervisor-stormdist-root conf storm-id)
+        blobstore (Utils/getSupervisorBlobStore conf)]
+    (FileUtils/forceMkdir (File. tmproot))
+    (if-not on-windows?
+      (Utils/restrictPermissions tmproot)
+      (if (conf SUPERVISOR-RUN-WORKER-AS-USER)
+        (throw-runtime (str "ERROR: Windows doesn't implement setting the correct permissions"))))
+    (Utils/downloadResourcesAsSupervisor conf (master-stormjar-key storm-id)
+      (supervisor-stormjar-path tmproot) blobstore)
+    (Utils/downloadResourcesAsSupervisor conf (master-stormcode-key storm-id)
+      (supervisor-stormcode-path tmproot) blobstore)
+    (Utils/downloadResourcesAsSupervisor conf (master-stormconf-key storm-id)
+      (supervisor-stormconf-path tmproot) blobstore)
+    (.shutdown blobstore)
+    (extract-dir-from-jar (supervisor-stormjar-path tmproot) RESOURCES-SUBDIR tmproot)
+    (download-blobs-for-topology! conf (supervisor-stormconf-path tmproot) localizer
+      tmproot)
+    (if (download-blobs-for-topology-succeed? (supervisor-stormconf-path tmproot) tmproot)
+      (do
+        (log-message "Successfully downloaded blob resources for storm-id " storm-id)
+        (FileUtils/forceMkdir (File. stormroot))
+        (Files/move (.toPath (File. tmproot)) (.toPath (File. stormroot))
+          (doto (make-array StandardCopyOption 1) (aset 0 StandardCopyOption/ATOMIC_MOVE)))
+        (setup-storm-code-dir conf (read-supervisor-storm-conf conf storm-id) stormroot))
+      (do
+        (log-message "Failed to download blob resources for storm-id " storm-id)
+        (rmr tmproot)))))
 
 (defn write-log-metadata-to-yaml-file! [storm-id port data conf]
   (let [file (get-log-metadata-file conf storm-id port)]
@@ -632,11 +824,6 @@
                                              (storm-conf LOGS-USERS)
                                              (storm-conf TOPOLOGY-USERS)))))}]
     (write-log-metadata-to-yaml-file! storm-id port data conf)))
-
-(defmethod mk-code-distributor :distributed [conf]
-  (let [code-distributor (new-instance (conf STORM-CODE-DISTRIBUTOR-CLASS))]
-    (.prepare code-distributor conf)
-    code-distributor))
 
 (defn jlp [stormroot conf]
   (let [resource-root (str stormroot File/separator RESOURCES-SUBDIR)
@@ -668,6 +855,21 @@
       "java"
       (str java-home file-path-separator "bin" file-path-separator "java")
       )))
+
+(defn create-blobstore-links
+  "Create symlinks in worker launch directory for all blobs"
+  [conf storm-id port worker-id]
+  (let [stormroot (supervisor-stormdist-root conf storm-id)
+        storm-conf (read-supervisor-storm-conf conf storm-id)
+        workerroot (worker-root conf worker-id)
+        blobstore-map (storm-conf TOPOLOGY-BLOBSTORE-MAP)
+        blob-file-names (get-blob-file-names blobstore-map)
+        resource-file-names (cons RESOURCES-SUBDIR blob-file-names)]
+    (log-message "Creating symlinks for worker-id: " worker-id " storm-id: "
+      storm-id " for files(" (count resource-file-names) "): " (pr-str resource-file-names))
+    (create-symlink! workerroot stormroot RESOURCES-SUBDIR)
+    (doseq [file-name blob-file-names]
+      (create-symlink! workerroot stormroot file-name file-name))))
 
 (defn create-artifacts-link
   "Create a symlink from workder directory to its port artifacts directory"
@@ -780,32 +982,35 @@
        (filter #(zip-contains-dir? % RESOURCES-SUBDIR))
        first ))
 
+;; distributed cache feature does not work in local mode
 (defmethod download-storm-code
-    :local [conf storm-id master-code-dir supervisor download-lock]
-    (let [stormroot (supervisor-stormdist-root conf storm-id)]
-      (locking download-lock
-            (FileUtils/copyDirectory (File. master-code-dir) (File. stormroot))
-            (let [classloader (.getContextClassLoader (Thread/currentThread))
-                  resources-jar (resources-jar)
-                  url (.getResource classloader RESOURCES-SUBDIR)
-                  target-dir (str stormroot file-path-separator RESOURCES-SUBDIR)]
-              (cond
-               resources-jar
-               (do
-                 (log-message "Extracting resources from jar at " resources-jar " to " target-dir)
-                 (extract-dir-from-jar resources-jar RESOURCES-SUBDIR stormroot))
-               url
-               (do
-                 (log-message "Copying resources at " (URI. (str url)) " to " target-dir)
-                 (if (= (.getProtocol url) "jar" )
-                   (extract-dir-from-jar (.getFile (.getJarFileURL (.openConnection url))) RESOURCES-SUBDIR stormroot)
-                   (FileUtils/copyDirectory (File. (.getPath (URI. (str url)))) (File. target-dir)))
-                 )
-               )
-              )
-            )))
-
-(defmethod mk-code-distributor :local [conf] nil)
+  :local [conf storm-id master-code-dir localizer]
+  (let [tmproot (str (supervisor-tmp-dir conf) file-path-separator (uuid))
+        stormroot (supervisor-stormdist-root conf storm-id)
+        blob-store (Utils/getNimbusBlobStore conf master-code-dir nil)]
+    (try
+      (FileUtils/forceMkdir (File. tmproot))
+      (.readBlobTo blob-store (master-stormcode-key storm-id) (FileOutputStream. (supervisor-stormcode-path tmproot)) nil)
+      (.readBlobTo blob-store (master-stormconf-key storm-id) (FileOutputStream. (supervisor-stormconf-path tmproot)) nil)
+      (finally
+        (.shutdown blob-store)))
+    (FileUtils/moveDirectory (File. tmproot) (File. stormroot))
+    (setup-storm-code-dir conf (read-supervisor-storm-conf conf storm-id) stormroot)
+    (let [classloader (.getContextClassLoader (Thread/currentThread))
+          resources-jar (resources-jar)
+          url (.getResource classloader RESOURCES-SUBDIR)
+          target-dir (str stormroot file-path-separator RESOURCES-SUBDIR)]
+      (cond
+        resources-jar
+        (do
+          (log-message "Extracting resources from jar at " resources-jar " to " target-dir)
+          (extract-dir-from-jar resources-jar RESOURCES-SUBDIR stormroot))
+        url
+        (do
+          (log-message "Copying resources at " (str url) " to " target-dir)
+          (FileUtils/copyDirectory (File. (.getFile url)) (File. target-dir))
+          ))
+      )))
 
 (defmethod launch-worker
     :local [supervisor storm-id port worker-id mem-onheap]

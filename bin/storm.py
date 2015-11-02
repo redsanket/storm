@@ -263,6 +263,34 @@ def upload_credentials(*args):
         jvmtype="-client",
         extrajars=[USER_CONF_DIR, STORM_BIN_DIR])
 
+def blobstore(*args):
+    """Syntax: [storm blobstore [cmd]]
+
+    list [KEY...] - lists blobs currently in the blob store
+    cat [-f FILE] KEY - read a blob and then either write it to a file, or STDOUT (requires read access).
+    create [-f FILE] [-a ACL ...] [--repl-fctr NUMBER] KEY - create a new blob. Contents comes from a FILE
+         or STDIN. ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma
+         separated list.
+         --repl-fctr refers to replication factor for the blob. Here NUMBER > 0.
+         for example the following would create a mytopo:data.tgz key using the data
+         stored in data.tgz.  User alice would have full access, bob would have
+         read/write access and everyone else would have read access.
+         storm blobstore create mytopo:data.tgz -f data.tgz -a u:alice:rwa,u:bob:rw,o::r
+    update [-f FILE] KEY - update the contents of a blob.  Contents comes from
+         a FILE or STDIN (requires write access).
+    delete KEY - delete an entry from the blob store (requires write access).
+    set-acl [-s ACL] KEY - ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma
+         separated list (requires admin access).
+    replication --read KEY - Used to read the replication factor of the blob.
+    replication --update --repl-fctr NUMBER KEY - NUMBER > 0. It is used to update the
+        replication factor of a blob.
+    """
+    exec_storm_class(
+        "backtype.storm.command.blobstore",
+        args=args,
+        jvmtype="-client",
+        extrajars=[USER_CONF_DIR, STORM_BIN_DIR])
+
 def activate(*args):
     """Syntax: [storm activate topology-name]
 
@@ -609,8 +637,8 @@ COMMANDS = {"jar": jar, "kill": kill, "shell": shell, "nimbus": nimbus, "ui": ui
             "remoteconfvalue": print_remoteconfvalue, "repl": repl, "classpath": print_classpath,
             "activate": activate, "deactivate": deactivate, "rebalance": rebalance, "help": print_usage,
             "list": listtopos, "dev-zookeeper": dev_zookeeper, "version": version, "monitor": monitor,
-            "upload-credentials": upload_credentials, "get-errors": get_errors, "set_log_level": set_log_level,
-            "kill_workers": kill_workers }
+            "upload-credentials": upload_credentials, "blobstore": blobstore, "get-errors": get_errors,
+             "set_log_level": set_log_level, "kill_workers": kill_workers }
 
 def parse_config(config_list):
     global CONFIG_OPTS

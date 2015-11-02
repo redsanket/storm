@@ -33,6 +33,7 @@
 (defprotocol ClusterState
   (set-ephemeral-node [this path data acls])
   (delete-node [this path])
+  (delete-node-blobstore [this parent-node-path nimbus-host-port-info])
   (create-sequential [this path data acls])
   ;; if node does not exist, create persistent with this data
   (set-data [this path data acls])
@@ -125,6 +126,10 @@
            (zk/mkdirs zk-writer (parent-path path) acls)
            (zk/create-node zk-writer path data :persistent acls))))
 
+      (delete-node-blobstore
+        [this parent-node-path nimbus-host-port-info]
+        (zk/delete-node-blobstore zk-writer parent-node-path nimbus-host-port-info))
+
      (delete-node
        [this path]
        (zk/delete-node zk-writer path))
@@ -173,11 +178,8 @@
   (assignment-info [this storm-id callback])
   (assignment-info-with-version [this storm-id callback])
   (assignment-version [this storm-id callback])
-  ;returns topologyIds under /stormroot/code-distributor
-  (code-distributor [this callback])
-  ;returns lits of nimbusinfos under /stormroot/code-distributor/storm-id
-  (code-distributor-info [this storm-id])
-
+  ;returns key information under /storm/blobstore/key
+  (blobstore-info [this blob-key])
   ;returns list of nimbus summaries stored under /stormroot/nimbuses/<nimbus-ids> -> <data>
   (nimbuses [this])
   ;adds the NimbusSummary to /stormroot/nimbuses/nimbus-id
@@ -207,9 +209,14 @@
   (update-storm! [this storm-id new-elems])
   (remove-storm-base! [this storm-id])
   (set-assignment! [this storm-id info])
-  ;adds nimbusinfo under /stormroot/code-distributor/storm-id
-  (setup-code-distributor! [this storm-id info])
+  ;; Sets up information related to key consisting of nimbus
+  ;; host:port and version info of the blob
+  (setup-blobstore! [this key nimbusInfo versionInfo])
+  (active-keys [this])
+  (blobstore [this callback])
+  (blobstore-key-details [this])
   (remove-storm! [this storm-id])
+  (remove-blobstore-key! [this blob-key])
   (report-error [this storm-id component-id node port error])
   (errors [this storm-id component-id])
   (last-error [this storm-id component-id])
@@ -224,7 +231,7 @@
 (def WORKERBEATS-ROOT "workerbeats")
 (def BACKPRESSURE-ROOT "backpressure")
 (def ERRORS-ROOT "errors")
-(def CODE-DISTRIBUTOR-ROOT "code-distributor")
+(def BLOBSTORE-ROOT "blobstore")
 (def NIMBUSES-ROOT "nimbuses")
 (def CREDENTIALS-ROOT "credentials")
 (def LOGCONFIG-ROOT "logconfigs")
@@ -235,7 +242,8 @@
 (def WORKERBEATS-SUBTREE (str "/" WORKERBEATS-ROOT))
 (def BACKPRESSURE-SUBTREE (str "/" BACKPRESSURE-ROOT))
 (def ERRORS-SUBTREE (str "/" ERRORS-ROOT))
-(def CODE-DISTRIBUTOR-SUBTREE (str "/" CODE-DISTRIBUTOR-ROOT))
+;; Blobstore subtree /storm/blobstore
+(def BLOBSTORE-SUBTREE (str "/" BLOBSTORE-ROOT))
 (def NIMBUSES-SUBTREE (str "/" NIMBUSES-ROOT))
 (def CREDENTIALS-SUBTREE (str "/" CREDENTIALS-ROOT))
 (def LOGCONFIG-SUBTREE (str "/" LOGCONFIG-ROOT))
@@ -248,9 +256,9 @@
   [id]
   (str ASSIGNMENTS-SUBTREE "/" id))
 
-(defn code-distributor-path
-  [id]
-  (str CODE-DISTRIBUTOR-SUBTREE "/" id))
+(defn blobstore-path
+  [key]
+  (str BLOBSTORE-SUBTREE "/" key))
 
 (defn nimbus-path
   [id]
@@ -353,7 +361,7 @@
         backpressure-callback (atom {})   ;; we want to reigister a topo directory getChildren callback for all workers of this dir
         assignments-callback (atom nil)
         storm-base-callback (atom {})
-        code-distributor-callback (atom nil)
+        blobstore-callback (atom nil)
         credentials-callback (atom {})
         log-config-callback (atom {})
         state-id (register
@@ -368,14 +376,14 @@
                                                (issue-map-callback! assignment-version-callback (first args))
                                                (issue-map-callback! assignment-info-with-version-callback (first args))))
                          SUPERVISORS-ROOT (issue-callback! supervisors-callback)
-                         CODE-DISTRIBUTOR-ROOT (issue-callback! code-distributor-callback)
+                         BLOBSTORE-ROOT (issue-callback! blobstore-callback) ;; callback register for blobstore
                          STORMS-ROOT (issue-map-callback! storm-base-callback (first args))
                          CREDENTIALS-ROOT (issue-map-callback! credentials-callback (first args))
                          LOGCONFIG-ROOT (issue-map-callback! log-config-callback (first args))
                          BACKPRESSURE-ROOT (issue-map-callback! backpressure-callback (first args))
                          ;; this should never happen
                          (exit-process! 30 "Unknown callback for subtree " subtree args)))))]
-    (doseq [p [ASSIGNMENTS-SUBTREE STORMS-SUBTREE SUPERVISORS-SUBTREE WORKERBEATS-SUBTREE ERRORS-SUBTREE CODE-DISTRIBUTOR-SUBTREE NIMBUSES-SUBTREE
+    (doseq [p [ASSIGNMENTS-SUBTREE STORMS-SUBTREE SUPERVISORS-SUBTREE WORKERBEATS-SUBTREE ERRORS-SUBTREE BLOBSTORE-SUBTREE NIMBUSES-SUBTREE
                LOGCONFIG-SUBTREE]]
       (mkdirs cluster-state p acls))
     (reify
@@ -408,13 +416,14 @@
           (swap! assignment-version-callback assoc storm-id callback))
         (get-version cluster-state (assignment-path storm-id) (not-nil? callback)))
 
-      (code-distributor
+      ;; blobstore state
+      (blobstore
         [this callback]
-        (when callback
-          (reset! code-distributor-callback callback))
+        (when callback)
+          (reset! blobstore-callback callback)
         (do
-          (sync-path cluster-state CODE-DISTRIBUTOR-SUBTREE)
-          (get-children cluster-state CODE-DISTRIBUTOR-SUBTREE (not-nil? callback))))
+          (sync-path cluster-state BLOBSTORE-SUBTREE)
+          (get-children cluster-state BLOBSTORE-SUBTREE (not-nil? callback))))
 
       (nimbuses
         [this]
@@ -436,17 +445,27 @@
 
         (set-ephemeral-node cluster-state (nimbus-path nimbus-id) (Utils/serialize nimbus-summary) acls))
 
-      (code-distributor-info
-        [this storm-id]
-        (map (fn [nimbus-info] (NimbusInfo/parse nimbus-info))
-          (let [path (code-distributor-path storm-id)]
-            (do
-              (sync-path cluster-state path)
-              (get-children cluster-state path false)))))
+      (blobstore-key-details
+        [this]
+        (do
+          (sync-path cluster-state BLOBSTORE-SUBTREE)
+          (get-children cluster-state BLOBSTORE-SUBTREE false))
+        )
+
+      (blobstore-info
+        [this blob-key]
+        (let [path (blobstore-path blob-key)]
+          (do
+            (sync-path cluster-state path)
+            (get-children cluster-state path false))))
 
       (active-storms
         [this]
         (get-children cluster-state STORMS-SUBTREE false))
+
+      (active-keys
+        [this]
+        (get-children cluster-state BLOBSTORE-SUBTREE false))
 
       (heartbeat-storms
         [this]
@@ -593,18 +612,22 @@
         (let [thrift-assignment (thriftify-assignment info)]
           (set-data cluster-state (assignment-path storm-id) (Utils/serialize thrift-assignment) acls)))
 
-      (setup-code-distributor!
-        [this storm-id nimbusInfo]
-        (let [path (str (code-distributor-path storm-id) "/" (.toHostPortString nimbusInfo))]
-        (mkdirs cluster-state (code-distributor-path storm-id) acls)
-        ;we delete the node first to ensure the node gets created as part of this session only.
-        (delete-node cluster-state path)
-        (set-ephemeral-node cluster-state path nil acls)))
+      (setup-blobstore!
+        [this key nimbusInfo versionInfo]
+        (let [path (str (blobstore-path key) "/" (.toHostPortString nimbusInfo) "-" versionInfo)]
+          (mkdirs cluster-state (blobstore-path key) acls)
+          ;we delete the node first to ensure the node gets created as part of this session only.
+          (delete-node-blobstore cluster-state (str (blobstore-path key)) (.toHostPortString nimbusInfo))
+          (set-ephemeral-node cluster-state path nil acls)))
+
+      (remove-blobstore-key!
+        [this blob-key]
+        (log-debug "removing key" blob-key)
+        (delete-node cluster-state (blobstore-path blob-key)))
 
       (remove-storm!
         [this storm-id]
         (delete-node cluster-state (assignment-path storm-id))
-        (delete-node cluster-state (code-distributor-path storm-id))
         (delete-node cluster-state (credentials-path storm-id))
         (delete-node cluster-state (log-config-path storm-id))
         (remove-storm-base! this storm-id))
