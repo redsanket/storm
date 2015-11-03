@@ -268,10 +268,9 @@ def blobstore(*args):
 
     list [KEY...] - lists blobs currently in the blob store
     cat [-f FILE] KEY - read a blob and then either write it to a file, or STDOUT (requires read access).
-    create [-f FILE] [-a ACL ...] [--repl-fctr NUMBER] KEY - create a new blob. Contents comes from a FILE
+    create [-f FILE] [-a ACL ...] [--replication-factor NUMBER] KEY - create a new blob. Contents comes from a FILE
          or STDIN. ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma
          separated list.
-         --repl-fctr refers to replication factor for the blob. Here NUMBER > 0.
          for example the following would create a mytopo:data.tgz key using the data
          stored in data.tgz.  User alice would have full access, bob would have
          read/write access and everyone else would have read access.

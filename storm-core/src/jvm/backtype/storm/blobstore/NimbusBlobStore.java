@@ -161,10 +161,12 @@ public class NimbusBlobStore extends ClientBlobStore {
   public class NimbusUploadAtomicOutputStream extends AtomicOutputStream {
     private String session;
     private int maxChunkSize = 4096;
+    private String key;
 
-    public NimbusUploadAtomicOutputStream(String session, int bufferSize) {
+    public NimbusUploadAtomicOutputStream(String session, int bufferSize, String key) {
       this.session = session;
       this.maxChunkSize = bufferSize;
+      this.key = key;
     }
 
     @Override
@@ -215,6 +217,7 @@ public class NimbusBlobStore extends ClientBlobStore {
       try {
         synchronized(client) {
           client.getClient().finishBlobUpload(session);
+          client.getClient().createStateInZookeeper(key);
         }
       } catch (TException e) {
         throw new RuntimeException(e);
@@ -238,7 +241,7 @@ public class NimbusBlobStore extends ClientBlobStore {
       throws AuthorizationException, KeyAlreadyExistsException {
     try {
       synchronized(client) {
-        return new NimbusUploadAtomicOutputStream(client.getClient().beginCreateBlob(key, meta), this.bufferSize);
+        return new NimbusUploadAtomicOutputStream(client.getClient().beginCreateBlob(key, meta), this.bufferSize, key);
       }
     } catch (AuthorizationException | KeyAlreadyExistsException exp) {
       throw exp;
@@ -252,7 +255,7 @@ public class NimbusBlobStore extends ClientBlobStore {
       throws AuthorizationException, KeyNotFoundException {
     try {
       synchronized(client) {
-        return new NimbusUploadAtomicOutputStream(client.getClient().beginUpdateBlob(key), this.bufferSize);
+        return new NimbusUploadAtomicOutputStream(client.getClient().beginUpdateBlob(key), this.bufferSize, key);
       }
     } catch (AuthorizationException | KeyNotFoundException exp) {
       throw exp;

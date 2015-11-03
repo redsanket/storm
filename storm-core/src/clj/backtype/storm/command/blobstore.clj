@@ -33,27 +33,25 @@
       (try 
         (copy in out)
         (.close out)
-        (.createStateInZookeeper blobstore key)
         (catch Exception e
           (log-message e)
           (.cancel out)
           (throw e))))))
 
 (defn create-blob-from-stream
-  "Create a blob in the blob storm from an InputStream"
+  "Create a blob in the blob store from an InputStream"
   [key ^InputStream in ^SettableBlobMeta meta]
   (with-configured-blob-client blobstore
     (let [out (.createBlob blobstore key meta)]
       (try 
         (copy in out)
         (.close out)
-        (.createStateInZookeeper blobstore key)
-        (catch Exception e 
+        (catch Exception e
           (.cancel out)
           (throw e))))))
 
 (defn read-blob
-  "Read a blob in the blob storm and write to an OutputStream"
+  "Read a blob in the blob store and write to an OutputStream"
   [key ^OutputStream out]
   (with-configured-blob-client blobstore
     (with-open [in (.getBlob blobstore key)]
@@ -88,11 +86,11 @@
     (log-message "Successfully updated " key)))
 
 (defn create-cli [args]
-  (let [[{file :file acl :acl repl-fctr :repl-fctr} [key] _] (cli args ["-f" "--file" :default nil]
+  (let [[{file :file acl :acl replication-factor :replication-fctr} [key] _] (cli args ["-f" "--file" :default nil]
                                                   ["-a" "--acl" :default [] :parse-fn as-acl]
-                                                  ["-r" "--repl-fctr" :default -1 :parse-fn parse-int])
+                                                  ["-r" "--replication-factor" :default -1 :parse-fn parse-int])
         meta (doto (SettableBlobMeta. acl)
-                   (.set_replication_factor repl-fctr))]
+                   (.set_replication_factor replication-factor))]
     (log-message "Creating " key " with ACL " (pr-str (map access-control-str acl)))
     (if file
       (with-open [f (input-stream file)]
@@ -138,19 +136,18 @@
       (condp = sub-command
       "--read" (let [key (first new-args)
                      blob-replication (.getBlobReplication blobstore key)
-                     repl-fctr (.get_replication blob-replication)]
-                     (log-message "Current replication factor " repl-fctr)
-                     repl-fctr)
-      "--update" (let [[{repl-fctr :repl-fctr} [key] _]
-                        (cli new-args ["-r" "--repl-fctr" :parse-fn parse-int])]
-                     (if (nil? repl-fctr)
+                     replication-factor (.get_replication blob-replication)]
+                     (log-message "Current replication factor " replication-factor)
+                     replication-factor)
+      "--update" (let [[{replication-factor :replication-factor} [key] _]
+                        (cli new-args ["-r" "--replication-factor" :parse-fn parse-int])]
+                     (if (nil? replication-factor)
                        (throw (RuntimeException. (str "Please set the replication factor")))
-                       (let [blob-replication (.updateBlobReplication blobstore key repl-fctr)
+                       (let [blob-replication (.updateBlobReplication blobstore key replication-factor)
                              repl-ftr (.get_replication blob-replication)]
                          (log-message "Replication factor is set to " repl-ftr)
                          repl-ftr)))
-      :else (throw (RuntimeException. (str sub-command " is not a supported blobstore command")))
-      ))))
+      :else (throw (RuntimeException. (str sub-command " is not a supported blobstore command")))))))
 
 (defn -main [& args]
   (let [command (first args)

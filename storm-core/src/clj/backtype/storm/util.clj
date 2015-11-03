@@ -22,6 +22,8 @@
   (:import [backtype.storm Config])
   (:import [backtype.storm.utils Time Container ClojureTimerTask Utils
             MutableObject MutableInt])
+  (:import [backtype.storm.security.auth NimbusPrincipal])
+  (:import [javax.security.auth Subject])
   (:import [java.util UUID Random ArrayList List Collections])
   (:import [java.util.zip ZipFile])
   (:import [java.util.concurrent.locks ReentrantReadWriteLock])
@@ -54,6 +56,16 @@
   (if (instance? RuntimeException e)
     e
     (RuntimeException. e)))
+
+(defn nimbus-subject []
+  (let [subject (Subject.)
+        principal (NimbusPrincipal.)
+        principals (.getPrincipals subject)]
+    (.add principals principal)
+    subject))
+
+(def get-nimbus-subject
+  (nimbus-subject))
 
 (def on-windows?
   (= "Windows_NT" (System/getenv "OS")))

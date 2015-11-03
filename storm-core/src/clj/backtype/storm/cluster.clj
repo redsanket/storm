@@ -420,7 +420,7 @@
       (blobstore
         [this callback]
         (when callback
-          (reset! blobstore-callback callback)
+          (reset! blobstore-callback callback))
         (do
           (sync-path cluster-state BLOBSTORE-SUBTREE)
           (get-children cluster-state BLOBSTORE-SUBTREE (not-nil? callback))))

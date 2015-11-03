@@ -25,7 +25,6 @@
   (:import [java.nio ByteBuffer]
            [java.util Collections HashMap]
            [backtype.storm.generated NimbusSummary])
-  (:import [backtype.storm.security.auth NimbusPrincipal])
   (:import [java.util Iterator])
   (:import [java.nio ByteBuffer]
            [java.util Collections List HashMap])
@@ -388,23 +387,13 @@
       [(.getNodeId slot) (.getPort slot)]
       )))
 
-(defn- get-nimbus-subject []
-  (let [nimbus-subject (Subject.)
-        nimbus-principal (NimbusPrincipal.)
-        principals (.getPrincipals nimbus-subject)]
-    (.add principals nimbus-principal)
-    nimbus-subject))
-
 (defn- get-metadata-version [blob-store key subject]
   (let [blob-meta (.getBlobMeta blob-store key subject)]
     (.get_version blob-meta)))
 
 (defn get-key-list-from-blob-store [blob-store]
-  (let [key-iter (.listKeys blob-store (get-nimbus-subject))
-        keys (iterator-seq key-iter)]
-    (if (not-nil? keys)
-      (java.util.ArrayList. keys)
-      [])))
+  (let [key-iter (.listKeys blob-store (get-nimbus-subject))]
+    (into [] (iterator-seq key-iter))))
 
 (defn- setup-storm-code [nimbus conf storm-id tmp-jar-location storm-conf topology]
   (let [subject (get-subject)
@@ -484,13 +473,6 @@
     (.readBlob blob-store (master-stormcode-key storm-id) (get-nimbus-subject)) StormTopology))
 
 (declare compute-executor->component)
-
-(defn- get-nimbus-subject []
-  (let [nimbus-subject (Subject.)
-        nimbus-principal (NimbusPrincipal.)
-        principals (.getPrincipals nimbus-subject)]
-    (.add principals nimbus-principal)
-    nimbus-subject))
 
 (defn read-storm-conf-as-nimbus [storm-id blob-store]
   (clojurify-structure
@@ -1065,17 +1047,17 @@
             TOPOLOGY-EVENTLOGGER-EXECUTORS (total-conf TOPOLOGY-EVENTLOGGER-EXECUTORS)
             TOPOLOGY-MAX-TASK-PARALLELISM (total-conf TOPOLOGY-MAX-TASK-PARALLELISM)})))
 
-(defn blob-rm [blob-store key storm-cluster-state]
+(defn blob-rm-key [blob-store key storm-cluster-state]
   (try
     (.deleteBlob blob-store key (get-nimbus-subject))
     (if (instance? LocalFsBlobStore blob-store)
       (.remove-blobstore-key! storm-cluster-state key))
     (catch Exception e)))
 
-(defn rm-from-blob-store [id blob-store storm-cluster-state]
-  (blob-rm blob-store (master-stormjar-key id) storm-cluster-state)
-  (blob-rm blob-store (master-stormconf-key id) storm-cluster-state)
-  (blob-rm blob-store (master-stormcode-key id) storm-cluster-state))
+(defn blob-rm-topology-keys [id blob-store storm-cluster-state]
+  (blob-rm-key blob-store (master-stormjar-key id) storm-cluster-state)
+  (blob-rm-key blob-store (master-stormconf-key id) storm-cluster-state)
+  (blob-rm-key blob-store (master-stormcode-key id) storm-cluster-state))
 
 (defn do-cleanup [nimbus]
   (if (is-leader nimbus :throw-exception false)
@@ -1091,7 +1073,7 @@
             (.teardown-heartbeats! storm-cluster-state id)
             (.teardown-topology-errors! storm-cluster-state id)
             (rmr (master-stormdist-root conf id))
-            (rm-from-blob-store id blob-store storm-cluster-state)
+            (blob-rm-topology-keys id blob-store storm-cluster-state)
             (swap! (:heartbeats-cache nimbus) dissoc id))
           )))
     (log-message "not a leader, skipping cleanup")))
