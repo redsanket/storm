@@ -1659,30 +1659,30 @@
                                                 topo-summ (TopologySummary. id
                                                             (:storm-name base)
                                                             (->> (:executor->node+port assignment)
-                                                                  keys
-                                                                  (mapcat executor-id->tasks)
-                                                                  count)
+                                                                 keys
+                                                                 (mapcat executor-id->tasks)
+                                                                 count)
                                                             (->> (:executor->node+port assignment)
-                                                                  keys
-                                                                  count)
+                                                                 keys
+                                                                 count)
                                                             (->> (:executor->node+port assignment)
-                                                                  vals
-                                                                  set
-                                                                  count)
+                                                                 vals
+                                                                 set
+                                                                 count)
                                                             (time-delta (:launch-time-secs base))
                                                             (extract-status-str base))]
-                                              (when-let [owner (:owner base)] (.set_owner topo-summ owner))
-                                              (when-let [sched-status (.get @(:id->sched-status nimbus) id)] (.set_sched_status topo-summ sched-status))
-                                              (when-let [resources (.get @(:id->resources nimbus) id)]
-                                                (.set_requested_memonheap topo-summ (get resources 0))
-                                                (.set_requested_memoffheap topo-summ (get resources 1))
-                                                (.set_requested_cpu topo-summ (get resources 2))
-                                                (.set_assigned_memonheap topo-summ (get resources 3))
-                                                (.set_assigned_memoffheap topo-summ (get resources 4))
-                                                (.set_assigned_cpu topo-summ (get resources 5)))
-                                              (.set_replication_count topo-summ (get-blob-replication-count (master-stormcode-key id) nimbus))
-                                              topo-summ
-                                        ))]
+                                               (when-let [owner (:owner base)] (.set_owner topo-summ owner))
+                                               (when-let [sched-status (.get @(:id->sched-status nimbus) id)] (.set_sched_status topo-summ sched-status))
+                                               (when-let [resources (.get @(:id->resources nimbus) id)]
+                                                 (.set_requested_memonheap topo-summ (get resources 0))
+                                                 (.set_requested_memoffheap topo-summ (get resources 1))
+                                                 (.set_requested_cpu topo-summ (get resources 2))
+                                                 (.set_assigned_memonheap topo-summ (get resources 3))
+                                                 (.set_assigned_memoffheap topo-summ (get resources 4))
+                                                 (.set_assigned_cpu topo-summ (get resources 5)))
+                                               (.set_replication_count topo-summ (get-blob-replication-count (master-stormcode-key id) nimbus))
+                                               topo-summ
+                                         ))]
           (ClusterSummary. supervisor-summaries
                            topology-summaries
                            nimbuses)
