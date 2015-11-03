@@ -126,9 +126,9 @@
            (zk/mkdirs zk-writer (parent-path path) acls)
            (zk/create-node zk-writer path data :persistent acls))))
 
-      (delete-node-blobstore
-        [this parent-node-path nimbus-host-port-info]
-        (zk/delete-node-blobstore zk-writer parent-node-path nimbus-host-port-info))
+     (delete-node-blobstore
+       [this parent-node-path nimbus-host-port-info]
+       (zk/delete-node-blobstore zk-writer parent-node-path nimbus-host-port-info))
 
      (delete-node
        [this path]

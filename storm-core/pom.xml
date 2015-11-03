@@ -429,7 +429,7 @@
                 <extensions>true</extensions>
                 <configuration>
                     <sourceDirectories>
-                        <sourceDirectory>src/clj/</sourceDirectory>
+                        <sourceDirectory>src/clj</sourceDirectory>
                     </sourceDirectories>
                     <namespaces>
                         <namespace>backtype.storm.daemon.*</namespace>

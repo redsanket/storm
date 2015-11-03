@@ -1233,12 +1233,12 @@ public class Utils {
 
   // Check for latest version of a key inside zookeeper and return nimbodes containing the latest version
   public static synchronized List<NimbusInfo> getNimbodesWithLatestVersionOfBlob(CuratorFramework zkClient, String key) throws Exception {
-    List<String> stateInfo = zkClient.getChildren().forPath("/blobstore/" + key);
+    List<String> stateInfoList = zkClient.getChildren().forPath("/blobstore/" + key);
     List<NimbusInfo> nimbusInfoList = new ArrayList<NimbusInfo>();
-    Long version = getLatestVersion(stateInfo);
-    LOG.debug("getNimbodesWithLatestVersion stateInfo {} version {}", stateInfo, version);
+    Long version = getLatestVersion(stateInfoList);
+    LOG.debug("getNimbodesWithLatestVersion stateInfo {} version {}", stateInfoList, version);
     // Get the nimbodes with the latest version
-    for(String state : stateInfo) {
+    for(String state : stateInfoList) {
       String[] nimbusKeyVersionInfo = state.split("-");
       if (version != null && version == Long.parseLong(nimbusKeyVersionInfo[1])) {
         nimbusInfoList.add(NimbusInfo.parse(nimbusKeyVersionInfo[0]));
@@ -1249,10 +1249,10 @@ public class Utils {
   }
 
   // Get version details from latest version of the blob
-  public static Long getLatestVersion (List<String> stateInfo) {
+  public static Long getLatestVersion (List<String> stateInfoList) {
     Long version = 0l;
     // Get latest version of the blob present in the zookeeper --> possible to refactor this piece of code
-    for(String state : stateInfo) {
+    for(String state : stateInfoList) {
       String[] nimbusKeyVersionInfo = state.split("-");
       if (nimbusKeyVersionInfo.length == 2 && version < Long.parseLong(nimbusKeyVersionInfo[1])) {
         version = Long.parseLong(nimbusKeyVersionInfo[1]);
@@ -1316,10 +1316,9 @@ public class Utils {
           }
         }
       } catch (AuthorizationException authExp) {
-        throw new RuntimeException(authExp);
       } catch (Exception exp) {
-        // Should we log or throw exception
-        throw new RuntimeException(exp);
+        // Logging an exception while client is connecting would be better
+        LOG.error("Exception {}", exp);
       }
     }
 

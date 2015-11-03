@@ -982,7 +982,6 @@
        (filter #(zip-contains-dir? % RESOURCES-SUBDIR))
        first ))
 
-;; distributed cache feature does not work in local mode
 (defmethod download-storm-code
   :local [conf storm-id master-code-dir localizer]
   (let [tmproot (str (supervisor-tmp-dir conf) file-path-separator (uuid))

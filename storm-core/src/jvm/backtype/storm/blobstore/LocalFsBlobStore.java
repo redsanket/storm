@@ -46,8 +46,6 @@ public class LocalFsBlobStore extends BlobStore {
   protected BlobStoreAclHandler _aclHandler;
   private NimbusInfo nimbusInfo;
   private FileBlobStoreImpl fbs;
-//  private Thread syncThread = null;
-//  private Thread cleanThread = null;
   Map conf;
 
   @Override
@@ -67,14 +65,6 @@ public class LocalFsBlobStore extends BlobStore {
       throw new RuntimeException(e);
     }
     _aclHandler = new BlobStoreAclHandler(conf);
-//    // Starting up the sync thread zookeeper client and launching the thread
-//    SyncBlob sync = new SyncBlob(this, conf);
-//    syncThread = new Thread(sync);
-//    syncThread.start();
-//    // Starting up the clean thread zookeeper client and launching the thread
-//    CleanBlobState cleanBlobState = new CleanBlobState(this, conf);
-//    cleanThread = new Thread(cleanBlobState);
-//    cleanThread.start();
   }
 
   @Override
@@ -234,9 +224,6 @@ public class LocalFsBlobStore extends BlobStore {
 
   @Override
   public void shutdown() {
-    //Empty
-//    if (syncThread !=null) {syncThread.interrupt();}
-//    if (cleanThread !=null) {cleanThread.interrupt();}
   }
 
   @Override
@@ -253,8 +240,6 @@ public class LocalFsBlobStore extends BlobStore {
 
   @Override
   public BlobReplication updateBlobReplication(String key, int replication, Subject who) {
-    // connect to a nimbus
-    // current nimbus is the leader
     BlobReplication replicationCount = null;
     try {
       LOG.warn ("For local file system blob store the update blobs function does not work." +
