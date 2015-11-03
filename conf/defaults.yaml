@@ -124,7 +124,7 @@ nimbus.blobstore.expiration.secs: 600
 
 storm.blobstore.inputstream.buffer.size.bytes: 65536
 client.blobstore.class: "backtype.storm.blobstore.NimbusBlobStore"
-blobstore.replication.factor: 3
+storm.blobstore.replication.factor: 3
 
 ### supervisor.* configs are for node supervisors
 # Define the amount of workers that can be run on this machine. Each worker is assigned a port to use for communication

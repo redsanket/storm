@@ -1046,7 +1046,7 @@ public class Config extends HashMap<String, Object> {
      */
     @isPositiveNumber
     @isInteger
-    public static final String BLOBSTORE_REPLICATION_FACTOR = "blobstore.replication.factor";
+    public static final String STORM_BLOBSTORE_REPLICATION_FACTOR = "storm.blobstore.replication.factor";
 
     /**
      * What blobstore implementation nimbus should use.

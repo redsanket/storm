@@ -153,7 +153,7 @@ public class BlobStoreTest {
     Map conf = new HashMap();
     conf.put(Config.BLOBSTORE_DIR, dirName);
     conf.put(Config.STORM_PRINCIPAL_TO_LOCAL_PLUGIN,"backtype.storm.security.auth.DefaultPrincipalToLocal");
-    conf.put(Config.BLOBSTORE_REPLICATION_FACTOR, 3);
+    conf.put(Config.STORM_BLOBSTORE_REPLICATION_FACTOR, 3);
     HdfsBlobStore store = new HdfsBlobStore();
     store.prepareInternal(conf, null, dfscluster.getConfiguration(0));
     return store;

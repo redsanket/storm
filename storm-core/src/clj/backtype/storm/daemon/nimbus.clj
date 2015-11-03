@@ -29,14 +29,9 @@
   (:import [java.util Iterator])
   (:import [java.nio ByteBuffer]
            [java.util Collections List HashMap])
-  (:import [backtype.storm.blobstore AtomicOutputStream
-            BlobStore
-            BlobStoreAclHandler
-            ClientBlobStore
-            InputStreamWithMeta
-            KeyFilter
-            SyncBlobs])
-            (:import [java.io FileNotFoundException File FileOutputStream FileInputStream])
+  (:import [backtype.storm.blobstore AtomicOutputStream BlobStore BlobStoreAclHandler
+            ClientBlobStore InputStreamWithMeta KeyFilter SyncBlobs])
+  (:import [java.io FileNotFoundException File FileOutputStream FileInputStream])
   (:import [java.net InetAddress])
   (:import [java.nio.channels Channels WritableByteChannel])
   (:import [backtype.storm.security.auth ThriftServer ThriftConnectionType ReqContext AuthUtils])
@@ -182,8 +177,7 @@
   (log-debug "set keys id = " id "set = " #{(master-stormcode-key id) (master-stormjar-key id) (master-stormconf-key id)})
   (if (local-mode? conf)
     [(master-stormcode-key id) (master-stormconf-key id)]
-    [(master-stormcode-key id) (master-stormjar-key id) (master-stormconf-key id)]
-    ))
+    [(master-stormcode-key id) (master-stormjar-key id) (master-stormconf-key id)]))
 
 (defn kill-transition [nimbus storm-id]
   (fn [kill-time]
@@ -420,14 +414,11 @@
         code-key (master-stormcode-key storm-id)
         conf-key (master-stormconf-key storm-id)
         nimbus-host-port-info (:nimbus-host-port-info nimbus)]
-    (log-message "subject-changed" subject)
     (if tmp-jar-location ;;in local mode there is no jar
       (do
-        (log-message "tmp-jar-location" tmp-jar-location)
         (.createBlob blob-store jar-key (FileInputStream. tmp-jar-location) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
         (if (instance? LocalFsBlobStore blob-store)
-          (.setup-blobstore! storm-cluster-state jar-key nimbus-host-port-info (get-metadata-version blob-store jar-key subject)))
-        ))
+          (.setup-blobstore! storm-cluster-state jar-key nimbus-host-port-info (get-metadata-version blob-store jar-key subject)))))
     (.createBlob blob-store conf-key (Utils/toCompressedJsonConf storm-conf) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
     (if (instance? LocalFsBlobStore blob-store)
       (.setup-blobstore! storm-cluster-state conf-key nimbus-host-port-info (get-metadata-version blob-store conf-key subject)))

@@ -23,6 +23,6 @@
   [client-sym & body]
   `(let [conf# (read-storm-config)
          ^ClientBlobStore ~client-sym (Utils/getClientBlobStore conf#)]
-    (try
-      ~@body
-    (finally (.shutdown ~client-sym)))))
+     (try
+       ~@body
+     (finally (.shutdown ~client-sym)))))

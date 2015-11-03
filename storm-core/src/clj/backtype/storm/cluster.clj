@@ -419,7 +419,7 @@
       ;; blobstore state
       (blobstore
         [this callback]
-        (when callback)
+        (when callback
           (reset! blobstore-callback callback)
         (do
           (sync-path cluster-state BLOBSTORE-SUBTREE)
@@ -449,8 +449,7 @@
         [this]
         (do
           (sync-path cluster-state BLOBSTORE-SUBTREE)
-          (get-children cluster-state BLOBSTORE-SUBTREE false))
-        )
+          (get-children cluster-state BLOBSTORE-SUBTREE false)))
 
       (blobstore-info
         [this blob-key]

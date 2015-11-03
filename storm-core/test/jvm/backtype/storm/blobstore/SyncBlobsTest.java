@@ -17,6 +17,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.curator.test.TestingServer;
 
 import java.io.File;
 import java.io.IOException;
@@ -99,10 +100,12 @@ public class SyncBlobsTest {
   }
 
   @Test
-  public void testGetLatestVersion() {
+  public void testGetLatestVersion() throws Exception {
     List<String> stateInfoList = new ArrayList<String>();
     stateInfoList.add("nimbus1:8000-123789434");
     stateInfoList.add("nimbus1:8000-123789435");
     assertTrue("Failed to get the latest version", Utils.getLatestVersion(stateInfoList)==123789435);
+    TestingServer server = new TestingServer();
+
   }
 }

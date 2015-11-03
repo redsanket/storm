@@ -145,7 +145,7 @@ public class HdfsBlobStore extends BlobStore {
   public AtomicOutputStream createBlob(String key, SettableBlobMeta meta, Subject who)
       throws AuthorizationException, KeyAlreadyExistsException {
     if (meta.get_replication_factor() <= 0) {
-      meta.set_replication_factor((int)conf.get(Config.BLOBSTORE_REPLICATION_FACTOR));
+      meta.set_replication_factor((int)conf.get(Config.STORM_BLOBSTORE_REPLICATION_FACTOR));
     }
     who = checkAndGetSubject(who);
     validateKey(key);
@@ -249,7 +249,7 @@ public class HdfsBlobStore extends BlobStore {
   public void setBlobMeta(String key, SettableBlobMeta meta, Subject who)
       throws AuthorizationException, KeyNotFoundException {
     if (meta.get_replication_factor() <= 0) {
-      meta.set_replication_factor((int)conf.get(Config.BLOBSTORE_REPLICATION_FACTOR));
+      meta.set_replication_factor((int)conf.get(Config.STORM_BLOBSTORE_REPLICATION_FACTOR));
     }
     who = checkAndGetSubject(who);
     validateKey(key);
