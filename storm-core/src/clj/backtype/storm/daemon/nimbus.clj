@@ -1120,7 +1120,6 @@
         (log-error "Cleaning inbox ... error deleting: " (.getName f))
         ))))
 
-;; Cleaning up corrupt topologies is a challange
 (defn cleanup-corrupt-topologies! [nimbus]
   (let [storm-cluster-state (:storm-cluster-state nimbus)
         blob-store (:blob-store nimbus)
