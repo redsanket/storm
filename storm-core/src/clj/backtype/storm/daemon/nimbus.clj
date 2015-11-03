@@ -412,14 +412,6 @@
       (java.util.ArrayList. keys)
       [])))
 
-;(defn- wait-for-sync [blob-store storm-cluster-state]
-;  (let [blob-store-key-set (set (get-key-list-from-blob-store blob-store))
-;        zk-key-set (set (.blobstore-details storm-cluster-state))]
-;  (log-message "blob-set" blob-store-key-set "zk-key-set" zk-key-set)
-;  (while (empty? (set/difference blob-store-key-set zk-key-set))
-;    (sleep-secs 1)
-;    )))
-
 (defn- setup-storm-code [nimbus conf storm-id tmp-jar-location storm-conf topology]
   (let [subject (get-subject)
         storm-cluster-state (:storm-cluster-state nimbus)
