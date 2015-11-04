@@ -136,18 +136,16 @@
     (with-configured-blob-client blobstore
       (condp = sub-command
       "--read" (let [key (first new-args)
-                     blob-replication (.getBlobReplication blobstore key)
-                     replication-factor (.get_replication blob-replication)]
-                     (log-message "Current replication factor " replication-factor)
-                     replication-factor)
+                     blob-replication (.getBlobReplication blobstore key)]
+                 (log-message "Current replication factor " blob-replication)
+                 blob-replication)
       "--update" (let [[{replication-factor :replication-factor} [key] _]
                         (cli new-args ["-r" "--replication-factor" :parse-fn parse-int])]
-                     (if (nil? replication-factor)
-                       (throw (RuntimeException. (str "Please set the replication factor")))
-                       (let [blob-replication (.updateBlobReplication blobstore key replication-factor)
-                             repl-ftr (.get_replication blob-replication)]
-                         (log-message "Replication factor is set to " repl-ftr)
-                         repl-ftr)))
+                   (if (nil? replication-factor)
+                     (throw (RuntimeException. (str "Please set the replication factor")))
+                     (let [blob-replication (.updateBlobReplication blobstore key replication-factor)]
+                       (log-message "Replication factor is set to " blob-replication)
+                       blob-replication)))
       :else (throw (RuntimeException. (str sub-command " is not a supported blobstore command")))))))
 
 (defn -main [& args]

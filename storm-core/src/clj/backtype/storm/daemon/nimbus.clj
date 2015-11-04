@@ -46,7 +46,7 @@
             ExecutorInfo InvalidTopologyException Nimbus$Iface Nimbus$Processor SubmitOptions TopologyInitialStatus
             KillOptions RebalanceOptions ClusterSummary SupervisorSummary TopologySummary TopologyInfo
             ExecutorSummary AuthorizationException GetInfoOptions NumErrorsChoice SettableBlobMeta ReadableBlobMeta
-            BeginDownloadResult ListBlobsResult BlobReplication ComponentPageInfo TopologyPageInfo LogConfig LogLevel LogLevelAction])
+            BeginDownloadResult ListBlobsResult ComponentPageInfo TopologyPageInfo LogConfig LogLevel LogLevelAction])
   (:import [backtype.storm.daemon Shutdownable])
   (:use [backtype.storm util config log timer zookeeper])
   (:require [backtype.storm [cluster :as cluster]
@@ -435,15 +435,14 @@
 (defn- get-blob-replication-count [blob-key nimbus]
   (if (:blob-store nimbus)
           (-> (:blob-store nimbus)
-            (.getBlobReplication  blob-key get-nimbus-subject)
-            (.get_replication))))
+            (.getBlobReplication  blob-key get-nimbus-subject))))
 
 (defn- wait-for-desired-code-replication [nimbus conf storm-id]
   (let [min-replication-count (conf TOPOLOGY-MIN-REPLICATION-COUNT)
         max-replication-wait-time (conf TOPOLOGY-MAX-REPLICATION-WAIT-TIME-SEC)
-        current-replication-count-jar (if (not (local-mode? conf)) (atom
-                                                                     (get-blob-replication-count (master-stormjar-key storm-id) nimbus))
-                                                                     (atom min-replication-count))
+        current-replication-count-jar (if (not (local-mode? conf))
+                                        (atom (get-blob-replication-count (master-stormjar-key storm-id) nimbus))
+                                        (atom min-replication-count))
         current-replication-count-code (atom (get-blob-replication-count (master-stormcode-key storm-id) nimbus))
         current-replication-count-conf (atom (get-blob-replication-count (master-stormconf-key storm-id) nimbus))
         total-wait-time (atom 0)]
@@ -454,9 +453,10 @@
       "jar" @current-replication-count-jar
       "replication count" (get-blob-replication-count (master-stormconf-key storm-id) nimbus))
     (if (:blob-store nimbus)
-      (while (and (> min-replication-count @current-replication-count-jar)
-               (> min-replication-count @current-replication-count-code)
-               (> min-replication-count @current-replication-count-conf)
+      (while (and
+               (or (> min-replication-count @current-replication-count-jar)
+                 (> min-replication-count @current-replication-count-code)
+                 (> min-replication-count @current-replication-count-conf))
                (or (= -1 max-replication-wait-time)
                  (< @total-wait-time max-replication-wait-time)))
         (sleep-secs 1)
@@ -840,10 +840,6 @@
 (defn- to-worker-slot [[node port]]
   (WorkerSlot. node port))
 
-(defn- get-key-list-from-ids [conf topology-ids]
-  (into [] (for [id topology-ids]
-              (get-key-list-from-id conf id))))
-
 ;; get existing assignment (just the executor->node+port map) -> default to {}
 ;; filter out ones which have a executor timeout
 ;; figure out available slots on cluster. add to that the used valid slots to get total slots. figure out how many executors should be in each slot (e.g., 4, 4, 4, 5)
@@ -1118,8 +1114,7 @@
       (.remove-storm! storm-cluster-state corrupt)
       (if (instance? LocalFsBlobStore blob-store)
         (doseq [blob-key (get-key-list-from-id (:conf nimbus) corrupt)]
-          (.remove-blobstore-key! storm-cluster-state blob-key)))
-      )))
+          (.remove-blobstore-key! storm-cluster-state blob-key))))))
 
 ;;setsup blobstore for all current keys
 (defn setup-blobstore [nimbus]
@@ -1888,12 +1883,12 @@
               (.put listers session keys-it)
               (ListBlobsResult. list-chunk (str session))))))
 
-      (^BlobReplication getBlobReplication [this ^String blob-key]
+      (^int getBlobReplication [this ^String blob-key]
         (->> (ReqContext/context)
           (.subject)
           (.getBlobReplication (:blob-store nimbus) blob-key)))
 
-      (^BlobReplication updateBlobReplication [this ^String blob-key ^int replication]
+      (^int updateBlobReplication [this ^String blob-key ^int replication]
         (->> (ReqContext/context)
           (.subject)
           (.updateBlobReplication (:blob-store nimbus) blob-key replication)))

@@ -5829,7 +5829,7 @@ class getBlobReplication_result:
   """
 
   thrift_spec = (
-    (0, TType.STRUCT, 'success', (BlobReplication, BlobReplication.thrift_spec), None, ), # 0
+    (0, TType.I32, 'success', None, None, ), # 0
     (1, TType.STRUCT, 'aze', (AuthorizationException, AuthorizationException.thrift_spec), None, ), # 1
     (2, TType.STRUCT, 'knf', (KeyNotFoundException, KeyNotFoundException.thrift_spec), None, ), # 2
   )
@@ -5849,9 +5849,8 @@ class getBlobReplication_result:
       if ftype == TType.STOP:
         break
       if fid == 0:
-        if ftype == TType.STRUCT:
-          self.success = BlobReplication()
-          self.success.read(iprot)
+        if ftype == TType.I32:
+          self.success = iprot.readI32();
         else:
           iprot.skip(ftype)
       elif fid == 1:
@@ -5877,8 +5876,8 @@ class getBlobReplication_result:
       return
     oprot.writeStructBegin('getBlobReplication_result')
     if self.success is not None:
-      oprot.writeFieldBegin('success', TType.STRUCT, 0)
-      self.success.write(oprot)
+      oprot.writeFieldBegin('success', TType.I32, 0)
+      oprot.writeI32(self.success)
       oprot.writeFieldEnd()
     if self.aze is not None:
       oprot.writeFieldBegin('aze', TType.STRUCT, 1)
@@ -6000,7 +5999,7 @@ class updateBlobReplication_result:
   """
 
   thrift_spec = (
-    (0, TType.STRUCT, 'success', (BlobReplication, BlobReplication.thrift_spec), None, ), # 0
+    (0, TType.I32, 'success', None, None, ), # 0
     (1, TType.STRUCT, 'aze', (AuthorizationException, AuthorizationException.thrift_spec), None, ), # 1
     (2, TType.STRUCT, 'knf', (KeyNotFoundException, KeyNotFoundException.thrift_spec), None, ), # 2
   )
@@ -6020,9 +6019,8 @@ class updateBlobReplication_result:
       if ftype == TType.STOP:
         break
       if fid == 0:
-        if ftype == TType.STRUCT:
-          self.success = BlobReplication()
-          self.success.read(iprot)
+        if ftype == TType.I32:
+          self.success = iprot.readI32();
         else:
           iprot.skip(ftype)
       elif fid == 1:
@@ -6048,8 +6046,8 @@ class updateBlobReplication_result:
       return
     oprot.writeStructBegin('updateBlobReplication_result')
     if self.success is not None:
-      oprot.writeFieldBegin('success', TType.STRUCT, 0)
-      self.success.write(oprot)
+      oprot.writeFieldBegin('success', TType.I32, 0)
+      oprot.writeI32(self.success)
       oprot.writeFieldEnd()
     if self.aze is not None:
       oprot.writeFieldBegin('aze', TType.STRUCT, 1)

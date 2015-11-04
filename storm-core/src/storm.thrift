@@ -580,8 +580,8 @@ service Nimbus {
   binary downloadBlobChunk(1: string session) throws (1: AuthorizationException aze);
   void deleteBlob(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   ListBlobsResult listBlobs(1: string session); //empty string "" means start at the beginning
-  BlobReplication getBlobReplication(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
-  BlobReplication updateBlobReplication(1: string key, 2: i32 replication) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
+  i32 getBlobReplication(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
+  i32 updateBlobReplication(1: string key, 2: i32 replication) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   void createStateInZookeeper(1: string key); // creates state in zookeeper when blob is uploaded through command line
 
   // need to add functions for asking about status of storms, what nodes they're running on, looking at task logs
@@ -612,10 +612,6 @@ service Nimbus {
    * Returns the user specified topology as submitted originally. Compare {@link #getTopology(String id)}.
    */
   StormTopology getUserTopology(1: string id) throws (1: NotAliveException e, 2: AuthorizationException aze);
-}
-
-struct BlobReplication {
-1: required i32 replication;
 }
 
 struct DRPCRequest {

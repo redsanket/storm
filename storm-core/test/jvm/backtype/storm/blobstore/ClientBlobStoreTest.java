@@ -5,7 +5,6 @@ import backtype.storm.generated.AccessControlType;
 import backtype.storm.generated.AuthorizationException;
 import backtype.storm.generated.ReadableBlobMeta;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
@@ -82,13 +81,13 @@ public class ClientBlobStoreTest {
     }
 
     @Override
-    public BlobReplication getBlobReplication(String key) {
-      return null;
+    public int getBlobReplication(String key) {
+      return -1;
     }
 
     @Override
-    public BlobReplication updateBlobReplication(String key, int replication) {
-      return null;
+    public int updateBlobReplication(String key, int replication) {
+      return -1;
     }
 
     @Override

@@ -23,7 +23,6 @@ import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.ReadableBlobMeta;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 import backtype.storm.nimbus.NimbusInfo;
 import backtype.storm.utils.NimbusClient;
 import backtype.storm.utils.Utils;
@@ -329,7 +328,7 @@ public class HdfsBlobStore extends BlobStore {
   }
 
   @Override
-  public BlobReplication getBlobReplication(String key, Subject who) throws AuthorizationException, KeyNotFoundException {
+  public int getBlobReplication(String key, Subject who) throws AuthorizationException, KeyNotFoundException {
     who = checkAndGetSubject(who);
     validateKey(key);
     SettableBlobMeta meta = getStoredBlobMeta(key);
@@ -342,7 +341,7 @@ public class HdfsBlobStore extends BlobStore {
   }
 
   @Override
-  public BlobReplication updateBlobReplication(String key, int replication, Subject who) throws AuthorizationException, KeyNotFoundException {
+  public int updateBlobReplication(String key, int replication, Subject who) throws AuthorizationException, KeyNotFoundException {
     who = checkAndGetSubject(who);
     validateKey(key);
     SettableBlobMeta meta = getStoredBlobMeta(key);

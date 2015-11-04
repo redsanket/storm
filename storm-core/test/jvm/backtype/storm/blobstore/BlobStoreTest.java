@@ -207,7 +207,7 @@ public class BlobStoreTest {
     out.write(1);
     out.close();
     assertStoreHasExactly(store, "test");
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", null).get_replication(), 4);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", null), 4);
     store.deleteBlob("test", null);
 
     //Test for replication with NIMBUS as user
@@ -218,9 +218,9 @@ public class BlobStoreTest {
     out.write(1);
     out.close();
     assertStoreHasExactly(store, "test");
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", admin).get_replication(), 4);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", admin), 4);
     store.updateBlobReplication("test", 5, admin);
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", admin).get_replication(), 5);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", admin), 5);
     store.deleteBlob("test", admin);
 
     //Test for replication using SUPERVISOR access
@@ -231,9 +231,9 @@ public class BlobStoreTest {
     out.write(1);
     out.close();
     assertStoreHasExactly(store, "test");
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", supervisor).get_replication(), 4);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", supervisor), 4);
     store.updateBlobReplication("test", 5, supervisor);
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", supervisor).get_replication(), 5);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", supervisor), 5);
     store.deleteBlob("test", supervisor);
 
     //Test for a user having read or write or admin access to read replication for a blob
@@ -253,12 +253,12 @@ public class BlobStoreTest {
     out.close();
     assertStoreHasExactly(store, "test");
     who = getSubject(writeSubject);
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", who).get_replication(), 4);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", who), 4);
 
     //Test for a user having WRITE or ADMIN privileges to change replication of a blob
     who = getSubject(adminSubject);
     store.updateBlobReplication("test", 5, who);
-    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", who).get_replication(), 5);
+    assertEquals("Blobstore replication not matching", store.getBlobReplication("test", who), 5);
     store.deleteBlob("test", getSubject(createSubject));
   }
 

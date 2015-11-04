@@ -23,8 +23,6 @@ import backtype.storm.generated.AuthorizationException;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.generated.ReadableBlobMeta;
-import backtype.storm.generated.BlobReplication;
-
 
 import backtype.storm.nimbus.NimbusInfo;
 import backtype.storm.utils.Utils;
@@ -239,27 +237,27 @@ public class LocalFsBlobStore extends BlobStore {
   }
 
   @Override
-  public BlobReplication getBlobReplication(String key, Subject who) throws Exception {
+  public int getBlobReplication(String key, Subject who) throws Exception {
     CuratorFramework zkClient = Utils.createZKClient(conf);
     if (zkClient.checkExists().forPath("/blobstore/" + key) == null) {
        zkClient.close();
-       return new BlobReplication(0);
+       return 0;
     }
-    BlobReplication replicationCount = new BlobReplication(zkClient.getChildren().forPath("/blobstore/" + key).size());
+    int replicationCount = zkClient.getChildren().forPath("/blobstore/" + key).size();
     zkClient.close();
     return replicationCount;
   }
 
   @Override
-  public BlobReplication updateBlobReplication(String key, int replication, Subject who) {
-    BlobReplication replicationCount = null;
+  public int updateBlobReplication(String key, int replication, Subject who) {
+    int replicationCount = 0;
     try {
       LOG.warn ("For local file system blob store the update blobs function does not work." +
               "Please use HDFS blob store to make this feature available. The replication your " +
               "are noticing is the present replication of the blob based on its availability on various nimbuses");
       replicationCount = this.getBlobReplication(key, who);
     } catch (Exception e) {
-      // do nothing
+      LOG.error("Exception {}", e);
     }
     return replicationCount;
   }

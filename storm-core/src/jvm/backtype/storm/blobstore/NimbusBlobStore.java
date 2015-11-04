@@ -6,7 +6,6 @@ import backtype.storm.generated.BeginDownloadResult;
 import backtype.storm.generated.ListBlobsResult;
 import backtype.storm.generated.ReadableBlobMeta;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
@@ -358,7 +357,7 @@ public class NimbusBlobStore extends ClientBlobStore {
   }
 
   @Override
-  public BlobReplication getBlobReplication(String key) throws AuthorizationException, KeyNotFoundException {
+  public int getBlobReplication(String key) throws AuthorizationException, KeyNotFoundException {
     try {
       return client.getClient().getBlobReplication(key);
     } catch (AuthorizationException | KeyNotFoundException exp) {
@@ -369,7 +368,7 @@ public class NimbusBlobStore extends ClientBlobStore {
   }
 
   @Override
-  public BlobReplication updateBlobReplication(String key, int replication) throws AuthorizationException, KeyNotFoundException {
+  public int updateBlobReplication(String key, int replication) throws AuthorizationException, KeyNotFoundException {
     try {
       return client.getClient().updateBlobReplication(key, replication);
     } catch (AuthorizationException | KeyNotFoundException exp) {

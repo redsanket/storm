@@ -6,7 +6,6 @@ import backtype.storm.generated.AccessControlType;
 import backtype.storm.generated.AuthorizationException;
 import backtype.storm.generated.ReadableBlobMeta;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
@@ -86,12 +85,12 @@ public class HdfsClientBlobStore extends ClientBlobStore {
   }
 
   @Override
-  public BlobReplication getBlobReplication(String key) throws AuthorizationException, KeyNotFoundException {
+  public int getBlobReplication(String key) throws AuthorizationException, KeyNotFoundException {
     return _blobStore.getBlobReplication(key, null);
   }
 
   @Override
-  public BlobReplication updateBlobReplication(String key, int replication) throws AuthorizationException, KeyNotFoundException {
+  public int updateBlobReplication(String key, int replication) throws AuthorizationException, KeyNotFoundException {
     return _blobStore.updateBlobReplication(key, replication, null);
   }
 

@@ -24,7 +24,6 @@ import backtype.storm.generated.AccessControlType;
 import backtype.storm.generated.AuthorizationException;
 import backtype.storm.generated.ReadableBlobMeta;
 import backtype.storm.generated.SettableBlobMeta;
-import backtype.storm.generated.BlobReplication;
 import backtype.storm.generated.KeyAlreadyExistsException;
 import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
@@ -47,8 +46,8 @@ public abstract class ClientBlobStore implements Shutdownable {
   public abstract Iterator<String> listKeys();
   public abstract void watchBlob(String key, IBlobWatcher watcher) throws AuthorizationException;
   public abstract void stopWatchingBlob(String key) throws AuthorizationException;
-  public abstract BlobReplication getBlobReplication(String Key) throws AuthorizationException, KeyNotFoundException;
-  public abstract BlobReplication updateBlobReplication(String Key, int replication) throws AuthorizationException, KeyNotFoundException;
+  public abstract int getBlobReplication(String Key) throws AuthorizationException, KeyNotFoundException;
+  public abstract int updateBlobReplication(String Key, int replication) throws AuthorizationException, KeyNotFoundException;
   public abstract boolean setClient(Map conf, NimbusClient client);
   public abstract void createStateInZookeeper(String key);
 
