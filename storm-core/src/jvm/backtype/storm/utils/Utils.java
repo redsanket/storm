@@ -18,7 +18,11 @@
 package backtype.storm.utils;
 
 import backtype.storm.Config;
-import backtype.storm.blobstore.*;
+import backtype.storm.blobstore.BlobStore;
+import backtype.storm.blobstore.BlobStoreAclHandler;
+import backtype.storm.blobstore.ClientBlobStore;
+import backtype.storm.blobstore.LocalFsBlobStore;
+import backtype.storm.blobstore.InputStreamWithMeta;
 import backtype.storm.generated.AccessControl;
 import backtype.storm.generated.AccessControlType;
 import backtype.storm.generated.AuthorizationException;
