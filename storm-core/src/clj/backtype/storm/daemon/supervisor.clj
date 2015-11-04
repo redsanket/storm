@@ -498,9 +498,9 @@
       (rmr (supervisor-stormdist-root conf storm-id)))
     (catch Exception e (log-message e (str "Exception removing: " storm-id)))))
 
-;; Method written to check for the files exists to avoid supervisor crashing
-;; Also makes sure there is no necessity for locking
 (defn verify-downloaded-files [conf localizer assigned-storm-ids all-downloaded-storm-ids]
+  "Method written to check for the files exists to avoid supervisor crashing
+   Also makes sure there is no necessity for locking"
   (remove nil?
     (into #{}
       (for [storm-id all-downloaded-storm-ids

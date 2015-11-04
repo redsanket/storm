@@ -18,23 +18,35 @@
 package backtype.storm.blobstore;
 
 import backtype.storm.Config;
-import backtype.storm.generated.*;
+import backtype.storm.generated.SettableBlobMeta;
+import backtype.storm.generated.AuthorizationException;
+import backtype.storm.generated.KeyAlreadyExistsException;
+import backtype.storm.generated.KeyNotFoundException;
+import backtype.storm.generated.ReadableBlobMeta;
+import backtype.storm.generated.BlobReplication;
+
+
 import backtype.storm.nimbus.NimbusInfo;
 import backtype.storm.utils.Utils;
-import backtype.storm.utils.ZookeeperAuthInfo;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.thrift.TBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.security.auth.Subject;
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import static backtype.storm.blobstore.BlobStoreAclHandler.*;
-import static backtype.storm.utils.Utils.newCurator;
+import static backtype.storm.blobstore.BlobStoreAclHandler.ADMIN;
+import static backtype.storm.blobstore.BlobStoreAclHandler.READ;
+import static backtype.storm.blobstore.BlobStoreAclHandler.WRITE;
 
 /**
  * Provides a local file system backed blob store implementation for Nimbus.
@@ -46,7 +58,7 @@ public class LocalFsBlobStore extends BlobStore {
   protected BlobStoreAclHandler _aclHandler;
   private NimbusInfo nimbusInfo;
   private FileBlobStoreImpl fbs;
-  Map conf;
+  private Map conf;
 
   @Override
   public void prepare(Map conf, String overrideBase, NimbusInfo nimbusInfo) {

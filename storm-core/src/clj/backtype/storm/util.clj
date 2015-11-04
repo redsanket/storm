@@ -33,8 +33,6 @@
   (:import [java.io File FileOutputStream RandomAccessFile StringWriter
             PrintWriter BufferedReader InputStreamReader IOException])
   (:import [java.lang.management ManagementFactory])
-  (:import [java.nio.file Files Paths])
-  (:import [java.nio.file.attribute FileAttribute])
   (:import [org.apache.commons.exec DefaultExecutor CommandLine])
   (:import [org.apache.commons.io FileUtils])
   (:import [backtype.storm.logging ThriftAccessLogger])
@@ -56,16 +54,6 @@
   (if (instance? RuntimeException e)
     e
     (RuntimeException. e)))
-
-(defn nimbus-subject []
-  (let [subject (Subject.)
-        principal (NimbusPrincipal.)
-        principals (.getPrincipals subject)]
-    (.add principals principal)
-    subject))
-
-(def get-nimbus-subject
-  (nimbus-subject))
 
 (def on-windows?
   (= "Windows_NT" (System/getenv "OS")))

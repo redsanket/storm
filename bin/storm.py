@@ -264,25 +264,24 @@ def upload_credentials(*args):
         extrajars=[USER_CONF_DIR, STORM_BIN_DIR])
 
 def blobstore(*args):
-    """Syntax: [storm blobstore [cmd]]
+    """Syntax: [storm blobstore cmd]
 
     list [KEY...] - lists blobs currently in the blob store
     cat [-f FILE] KEY - read a blob and then either write it to a file, or STDOUT (requires read access).
     create [-f FILE] [-a ACL ...] [--replication-factor NUMBER] KEY - create a new blob. Contents comes from a FILE
-         or STDIN. ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma
-         separated list.
-         for example the following would create a mytopo:data.tgz key using the data
-         stored in data.tgz.  User alice would have full access, bob would have
-         read/write access and everyone else would have read access.
-         storm blobstore create mytopo:data.tgz -f data.tgz -a u:alice:rwa,u:bob:rw,o::r
+         or STDIN. ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma separated list.
     update [-f FILE] KEY - update the contents of a blob.  Contents comes from
          a FILE or STDIN (requires write access).
     delete KEY - delete an entry from the blob store (requires write access).
     set-acl [-s ACL] KEY - ACL is in the form [uo]:[username]:[r-][w-][a-] can be comma
          separated list (requires admin access).
     replication --read KEY - Used to read the replication factor of the blob.
-    replication --update --repl-fctr NUMBER KEY - NUMBER > 0. It is used to update the
+    replication --update --replication-factor NUMBER KEY where NUMBER > 0. It is used to update the
         replication factor of a blob.
+    For example, the following would create a mytopo:data.tgz key using the data
+    stored in data.tgz.  User alice would have full access, bob would have
+    read/write access and everyone else would have read access.
+    storm blobstore create mytopo:data.tgz -f data.tgz -a u:alice:rwa,u:bob:rw,o::r
     """
     exec_storm_class(
         "backtype.storm.command.blobstore",

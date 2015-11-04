@@ -18,7 +18,12 @@
 package backtype.storm.blobstore;
 
 import backtype.storm.Config;
-import backtype.storm.generated.*;
+import backtype.storm.generated.AuthorizationException;
+import backtype.storm.generated.KeyNotFoundException;
+import backtype.storm.generated.KeyAlreadyExistsException;
+import backtype.storm.generated.ReadableBlobMeta;
+import backtype.storm.generated.SettableBlobMeta;
+import backtype.storm.generated.BlobReplication;
 import backtype.storm.nimbus.NimbusInfo;
 import backtype.storm.utils.NimbusClient;
 import backtype.storm.utils.Utils;
@@ -39,7 +44,9 @@ import java.security.PrivilegedAction;
 import java.util.Iterator;
 import java.util.Map;
 
-import static backtype.storm.blobstore.BlobStoreAclHandler.*;
+import static backtype.storm.blobstore.BlobStoreAclHandler.ADMIN;
+import static backtype.storm.blobstore.BlobStoreAclHandler.READ;
+import static backtype.storm.blobstore.BlobStoreAclHandler.WRITE;
 
 /**
  * Provides a HDFS file system backed blob store implementation.

@@ -27,7 +27,9 @@ import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
 
 /**
  * Is called periodically and updates the nimbus with blobs based on the state stored inside the zookeeper

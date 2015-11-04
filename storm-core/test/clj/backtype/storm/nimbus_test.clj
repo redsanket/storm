@@ -939,7 +939,7 @@
          (bind storm-id2 (get-storm-id cluster-state "t2"))
          (.shutdown nimbus)
          (let [blob-store (Utils/getNimbusBlobStore conf nil)]
-           (nimbus/rm-from-blob-store storm-id1 blob-store cluster-state)
+           (nimbus/blob-rm-topology-keys storm-id1 blob-store cluster-state)
            (.shutdown blob-store))
          (bind nimbus (nimbus/service-handler conf (nimbus/standalone-nimbus)))
          (is ( = #{storm-id2} (set (.active-storms cluster-state))))

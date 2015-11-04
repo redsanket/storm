@@ -984,7 +984,6 @@ public class Config extends HashMap<String, Object> {
      */
     @isString
     public static final String CLIENT_BLOBSTORE = "client.blobstore.class";
-    public static final Object CLIENT_BLOBSTORE_SCHEMA = String.class;
 
     /**
      * What blobstore download parallelism the supervisor should use.

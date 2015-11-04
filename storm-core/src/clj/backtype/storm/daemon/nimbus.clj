@@ -14,14 +14,16 @@
 ;; See the License for the specific language governing permissions and
 ;; limitations under the License.
 (ns backtype.storm.daemon.nimbus
-  (:import [org.apache.thrift.server THsHaServer THsHaServer$Args]
-           [backtype.storm.generated KeyNotFoundException]
-           [backtype.storm.blobstore LocalFsBlobStore])
+  (:import [org.apache.thrift.server THsHaServer THsHaServer$Args])
+  (:import [backtype.storm.generated KeyNotFoundException])
+  (:import [backtype.storm.blobstore LocalFsBlobStore])
   (:import [org.apache.thrift.protocol TBinaryProtocol TBinaryProtocol$Factory])
   (:import [org.apache.thrift.exception])
   (:import [org.apache.thrift.transport TNonblockingServerTransport TNonblockingServerSocket])
   (:import [org.apache.commons.io FileUtils])
   (:import [javax.security.auth Subject])
+  (:import [backtype.storm.security.auth NimbusPrincipal])
+  (:import [java.util ArrayList])
   (:import [java.nio ByteBuffer]
            [java.util Collections HashMap]
            [backtype.storm.generated NimbusSummary])
@@ -171,6 +173,17 @@
 
 (declare delay-event)
 (declare mk-assignments)
+
+(defn nimbus-subject
+  []
+  (let [subject (Subject.)
+        principal (NimbusPrincipal.)
+        principals (.getPrincipals subject)]
+    (.add principals principal)
+    subject))
+
+(def get-nimbus-subject
+  (nimbus-subject))
 
 (defn- get-key-list-from-id [conf id]
   (log-debug "set keys id = " id "set = " #{(master-stormcode-key id) (master-stormjar-key id) (master-stormconf-key id)})
@@ -391,9 +404,9 @@
   (let [blob-meta (.getBlobMeta blob-store key subject)]
     (.get_version blob-meta)))
 
-(defn get-key-list-from-blob-store [blob-store]
-  (let [key-iter (.listKeys blob-store (get-nimbus-subject))]
-    (into [] (iterator-seq key-iter))))
+(defn get-key-set-from-blob-store [blob-store]
+  (let [key-iter (.listKeys blob-store get-nimbus-subject)]
+    (set (iterator-seq key-iter))))
 
 (defn- setup-storm-code [nimbus conf storm-id tmp-jar-location storm-conf topology]
   (let [subject (get-subject)
@@ -422,7 +435,7 @@
 (defn- get-blob-replication-count [blob-key nimbus]
   (if (:blob-store nimbus)
           (-> (:blob-store nimbus)
-            (.getBlobReplication  blob-key (get-nimbus-subject))
+            (.getBlobReplication  blob-key get-nimbus-subject)
             (.get_replication))))
 
 (defn- wait-for-desired-code-replication [nimbus conf storm-id]
@@ -440,12 +453,12 @@
       "conf" @current-replication-count-conf
       "jar" @current-replication-count-jar
       "replication count" (get-blob-replication-count (master-stormconf-key storm-id) nimbus))
-  (if (:blob-store nimbus)
-    (while (and (> min-replication-count @current-replication-count-jar)
-                (> min-replication-count @current-replication-count-code)
-                (> min-replication-count @current-replication-count-conf)
-             (or (= -1 max-replication-wait-time)
-               (< @total-wait-time max-replication-wait-time)))
+    (if (:blob-store nimbus)
+      (while (and (> min-replication-count @current-replication-count-jar)
+               (> min-replication-count @current-replication-count-code)
+               (> min-replication-count @current-replication-count-conf)
+               (or (= -1 max-replication-wait-time)
+                 (< @total-wait-time max-replication-wait-time)))
         (sleep-secs 1)
         (log-debug "waiting for desired replication to be achieved.
           min-replication-count = " min-replication-count  " max-replication-wait-time = " max-replication-wait-time
@@ -457,12 +470,12 @@
         (if (not (local-mode? conf))(reset! current-replication-count-conf  (get-blob-replication-count (master-stormconf-key storm-id))))
           (reset! current-replication-count-code  (get-blob-replication-count (master-stormcode-key storm-id)))
           (reset! current-replication-count-jar  (get-blob-replication-count (master-stormjar-key storm-id)))))
-  (if (and (< min-replication-count @current-replication-count-conf)
-           (< min-replication-count @current-replication-count-code)
-           (< min-replication-count @current-replication-count-jar))
+    (if (and (< min-replication-count @current-replication-count-conf)
+          (< min-replication-count @current-replication-count-code)
+          (< min-replication-count @current-replication-count-jar))
       (log-message "desired replication count of "  min-replication-count " not achieved but we have hit the max wait time "
-      max-replication-wait-time " so moving on with replication count for conf key = " @current-replication-count-conf
-      " for code key = " @current-replication-count-code "for jar key = " @current-replication-count-jar)
+        max-replication-wait-time " so moving on with replication count for conf key = " @current-replication-count-conf
+        " for code key = " @current-replication-count-code "for jar key = " @current-replication-count-jar)
       (log-message "desired replication count "  min-replication-count " achieved,
         current-replication-count for conf key " @current-replication-count-conf ",
         current-replication-count for code key = " @current-replication-count-code ",
@@ -470,14 +483,14 @@
 
 (defn- read-storm-topology-as-nimbus [storm-id blob-store]
   (Utils/deserialize
-    (.readBlob blob-store (master-stormcode-key storm-id) (get-nimbus-subject)) StormTopology))
+    (.readBlob blob-store (master-stormcode-key storm-id) get-nimbus-subject) StormTopology))
 
 (declare compute-executor->component)
 
 (defn read-storm-conf-as-nimbus [storm-id blob-store]
   (clojurify-structure
     (Utils/fromCompressedJsonConf
-      (.readBlob blob-store (master-stormconf-key storm-id) (get-nimbus-subject)))))
+      (.readBlob blob-store (master-stormconf-key storm-id) get-nimbus-subject))))
 
 (defn read-topology-details [nimbus storm-id]
   (let [conf (:conf nimbus)
@@ -1049,10 +1062,11 @@
 
 (defn blob-rm-key [blob-store key storm-cluster-state]
   (try
-    (.deleteBlob blob-store key (get-nimbus-subject))
+    (.deleteBlob blob-store key get-nimbus-subject)
     (if (instance? LocalFsBlobStore blob-store)
       (.remove-blobstore-key! storm-cluster-state key))
-    (catch Exception e)))
+    (catch Exception e
+      (log-message "Exception" e))))
 
 (defn blob-rm-topology-keys [id blob-store storm-cluster-state]
   (blob-rm-key blob-store (master-stormjar-key id) storm-cluster-state)
@@ -1111,12 +1125,12 @@
 (defn setup-blobstore [nimbus]
   (let [storm-cluster-state (:storm-cluster-state nimbus)
         blob-store (:blob-store nimbus)
-        local-list-of-keys (set (get-key-list-from-blob-store blob-store))
+        local-set-of-keys (get-key-set-from-blob-store blob-store)
         all-keys (set (.active-keys storm-cluster-state))
-        locally-available-active-keys (set/intersection local-list-of-keys all-keys)]
+        locally-available-active-keys (set/intersection local-set-of-keys all-keys)]
     (log-debug "Creating list of key entries for blobstore inside zookeeper" all-keys "local" locally-available-active-keys)
     (doseq [key locally-available-active-keys]
-      (.setup-blobstore! storm-cluster-state key (:nimbus-host-port-info nimbus) (get-metadata-version blob-store key (get-nimbus-subject)))
+      (.setup-blobstore! storm-cluster-state key (:nimbus-host-port-info nimbus) (get-metadata-version blob-store key get-nimbus-subject))
       )))
 
 (defn- get-errors [storm-cluster-state storm-id component-id]
@@ -1160,7 +1174,7 @@
   (let [storm-cluster-state (:storm-cluster-state nimbus)
         blob-store (:blob-store nimbus)
         id (get-storm-id storm-cluster-state storm-name)]
-   (try-read-storm-conf conf id blob-store)))
+    (try-read-storm-conf conf id blob-store)))
 
 (defn try-read-storm-topology [storm-id blob-store]
   (try-cause
@@ -1220,15 +1234,15 @@
   (if (not (is-leader nimbus :throw-exception false))
     (let [storm-cluster-state (:storm-cluster-state nimbus)
           nimbus-host-port-info (:nimbus-host-port-info nimbus)
-          blob-store-key-list (get-key-list-from-blob-store (:blob-store nimbus))
+          blob-store-key-list (into [] (get-key-set-from-blob-store (:blob-store nimbus)))
           zk-key-list (into [] (.blobstore storm-cluster-state (fn [] (blob-sync-code conf nimbus))))]
-      (log-debug "blob-sync-code " "keys " blob-store-key-list "blob-key " blob-store-key-list)
-      (let [sync-object (doto
+      (log-debug "blob-sync-code " "blob-store-keys " blob-store-key-list "zookeeper-keys " zk-key-list)
+      (let [sync-blobs (doto
                           (SyncBlobs. (:blob-store nimbus) conf)
                           (.setNimbusInfo nimbus-host-port-info)
-                          (.setBlobStoreKeyList (if (not-nil? blob-store-key-list) (java.util.ArrayList. blob-store-key-list) (java.util.ArrayList.)))
-                          (.setZookeeperKeyList (if (not-nil? zk-key-list) (java.util.ArrayList. zk-key-list) (java.util.ArrayList.))))]
-        (.syncBlobs sync-object)))))
+                          (.setBlobStoreKeyList (if (not-nil? blob-store-key-list) (ArrayList. blob-store-key-list) (ArrayList.)))
+                          (.setZookeeperKeyList (if (not-nil? zk-key-list) (ArrayList. zk-key-list) (ArrayList.))))]
+        (.syncBlobs sync-blobs)))))
 
 (defmethod blob-sync-code :local [conf nimbus]
   nil)
@@ -1297,36 +1311,35 @@
       (doseq [storm-id (.active-storms (:storm-cluster-state nimbus))]
         (transition! nimbus storm-id :startup)))
     (schedule-recurring (:timer nimbus)
-                        0
-                        (conf NIMBUS-MONITOR-FREQ-SECS)
-                        (fn []
-                          (when-not (conf NIMBUS-DO-NOT-REASSIGN)
-                            (locking (:submit-lock nimbus)
-                              (mk-assignments nimbus)))
-                          (do-cleanup nimbus)
-                          ))
+      0
+      (conf NIMBUS-MONITOR-FREQ-SECS)
+      (fn []
+        (when-not (conf NIMBUS-DO-NOT-REASSIGN)
+          (locking (:submit-lock nimbus)
+            (mk-assignments nimbus)))
+        (do-cleanup nimbus)))
+
     ;; Schedule Nimbus inbox cleaner
     (schedule-recurring (:timer nimbus)
-                        0
-                        (conf NIMBUS-CLEANUP-INBOX-FREQ-SECS)
-                        (fn []
-                          (clean-inbox (inbox nimbus) (conf NIMBUS-INBOX-JAR-EXPIRATION-SECS))
-                          ))
+      0
+      (conf NIMBUS-CLEANUP-INBOX-FREQ-SECS)
+      (fn []
+        (clean-inbox (inbox nimbus) (conf NIMBUS-INBOX-JAR-EXPIRATION-SECS))))
 
     ;; Schedule nimbus code sync thread to sync code from other nimbuses.
     (if (instance? LocalFsBlobStore blob-store)
       (schedule-recurring (:timer nimbus)
-                          0
-                          (conf NIMBUS-CODE-SYNC-FREQ-SECS)
-                          (fn []
-                            (blob-sync-code conf nimbus)
-                            )))
+        0
+        (conf NIMBUS-CODE-SYNC-FREQ-SECS)
+        (fn []
+          (blob-sync-code conf nimbus))))
 
     (schedule-recurring (:timer nimbus)
-                        0
-                        (conf NIMBUS-CREDENTIAL-RENEW-FREQ-SECS)
-                        (fn []
-                          (renew-credentials nimbus)))
+      0
+      (conf NIMBUS-CREDENTIAL-RENEW-FREQ-SECS)
+      (fn []
+        (renew-credentials nimbus)))
+
     (reify Nimbus$Iface
       (^void submitTopologyWithOpts
         [this ^String storm-name ^String uploadedJarLocation ^String serializedConf ^StormTopology topology
@@ -1644,13 +1657,11 @@
                                                  (.set_assigned_memonheap topo-summ (get resources 3))
                                                  (.set_assigned_memoffheap topo-summ (get resources 4))
                                                  (.set_assigned_cpu topo-summ (get resources 5)))
-                                               (.set_replication_count topo-summ (get-blob-replication-count (master-stormcode-key id) nimbus))
-                                               topo-summ
-                                         ))]
+                                                 (.set_replication_count topo-summ (get-blob-replication-count (master-stormcode-key id) nimbus))
+                                               topo-summ))]
           (ClusterSummary. supervisor-summaries
                            topology-summaries
-                           nimbuses)
-          ))
+                           nimbuses)))
       
       (^TopologyInfo getTopologyInfoWithOpts [this ^String storm-id ^GetInfoOptions options]
         (let [{:keys [storm-name
@@ -1710,7 +1721,7 @@
               (.set_assigned_cpu topo-info (get resources 5)))
             (when-let [component->debug (:component->debug base)]
               (.set_component_debug topo-info (map-val converter/thriftify-debugoptions component->debug)))
-            (.set_replication_count topo-info (get-blob-replication-count (master-stormcode-key storm-id) nimbus))
+              (.set_replication_count topo-info (get-blob-replication-count (master-stormcode-key storm-id) nimbus))
           topo-info
           ))
 
@@ -1750,9 +1761,8 @@
               blob-store (:blob-store nimbus)
               nimbus-host-port-info (:nimbus-host-port-info nimbus)]
           (if (instance? LocalFsBlobStore blob-store)
-            (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-metadata-version blob-store blob-key (get-nimbus-subject))))
-          (log-debug "Created state in zookeeper" storm-cluster-state blob-store nimbus-host-port-info)
-          ))
+            (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-metadata-version blob-store blob-key get-nimbus-subject)))
+          (log-debug "Created state in zookeeper" storm-cluster-state blob-store nimbus-host-port-info)))
 
       (^void uploadBlobChunk [this ^String session ^ByteBuffer blob-chunk]
         (let [uploaders (:blob-uploaders nimbus)]
@@ -1865,11 +1875,11 @@
               (.remove listers session)
               (log-message "No more blobs to list for session " session)
               ;; A blank result communicates that there are no more blobs.
-              (ListBlobsResult. (java.util.ArrayList. 0) (str session)))
+              (ListBlobsResult. (ArrayList. 0) (str session)))
             (let [^List list-chunk (->> keys-it
                                      (iterator-seq)
                                      (take 100) ;; Limit to next 100 keys
-                                     (java.util.ArrayList.))
+                                     (ArrayList.))
                   _ (log-message session " downloading " (.size list-chunk) " entries")]
               (.put listers session keys-it)
               (ListBlobsResult. list-chunk (str session))))))

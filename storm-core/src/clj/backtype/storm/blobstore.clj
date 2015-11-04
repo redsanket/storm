@@ -25,4 +25,4 @@
          ^ClientBlobStore ~client-sym (Utils/getClientBlobStore conf#)]
      (try
        ~@body
-     (finally (.shutdown ~client-sym)))))
+       (finally (.shutdown ~client-sym)))))

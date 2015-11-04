@@ -1,7 +1,14 @@
 package backtype.storm.blobstore;
 
 import backtype.storm.Config;
-import backtype.storm.generated.*;
+import backtype.storm.generated.AuthorizationException;
+import backtype.storm.generated.BeginDownloadResult;
+import backtype.storm.generated.ListBlobsResult;
+import backtype.storm.generated.ReadableBlobMeta;
+import backtype.storm.generated.SettableBlobMeta;
+import backtype.storm.generated.BlobReplication;
+import backtype.storm.generated.KeyAlreadyExistsException;
+import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
 import backtype.storm.utils.Utils;
 import org.apache.thrift.TException;

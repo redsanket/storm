@@ -1,7 +1,14 @@
 package backtype.storm.blobstore;
 
 import backtype.storm.Config;
-import backtype.storm.generated.*;
+import backtype.storm.generated.AccessControl;
+import backtype.storm.generated.AuthorizationException;
+import backtype.storm.generated.KeyAlreadyExistsException;
+import backtype.storm.generated.KeyNotFoundException;
+import backtype.storm.generated.ReadableBlobMeta;
+import backtype.storm.generated.SettableBlobMeta;
+import backtype.storm.generated.AccessControlType;
+
 import backtype.storm.security.auth.NimbusPrincipal;
 import backtype.storm.security.auth.SingleUserPrincipal;
 import backtype.storm.utils.Utils;
@@ -20,9 +27,19 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.util.*;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.UUID;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.Iterator;
+import java.util.Arrays;
+import java.util.List;
+import java.util.ArrayList;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class BlobStoreTest {
   private static final Logger LOG = LoggerFactory.getLogger(BlobStoreTest.class);

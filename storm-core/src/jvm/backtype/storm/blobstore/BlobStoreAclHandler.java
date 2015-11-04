@@ -30,7 +30,12 @@ import org.slf4j.LoggerFactory;
 
 import javax.security.auth.Subject;
 import java.security.Principal;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Provides common handling of acls for Blobstores.

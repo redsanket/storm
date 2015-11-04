@@ -1,6 +1,13 @@
 package backtype.storm.blobstore;
 
-import backtype.storm.generated.*;
+import backtype.storm.generated.AccessControl;
+import backtype.storm.generated.AccessControlType;
+import backtype.storm.generated.AuthorizationException;
+import backtype.storm.generated.ReadableBlobMeta;
+import backtype.storm.generated.SettableBlobMeta;
+import backtype.storm.generated.BlobReplication;
+import backtype.storm.generated.KeyAlreadyExistsException;
+import backtype.storm.generated.KeyNotFoundException;
 import backtype.storm.utils.NimbusClient;
 import org.junit.After;
 import org.junit.Assert;

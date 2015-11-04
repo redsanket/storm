@@ -421,9 +421,8 @@
         [this callback]
         (when callback
           (reset! blobstore-callback callback))
-        (do
-          (sync-path cluster-state BLOBSTORE-SUBTREE)
-          (get-children cluster-state BLOBSTORE-SUBTREE (not-nil? callback))))
+        (sync-path cluster-state BLOBSTORE-SUBTREE)
+        (get-children cluster-state BLOBSTORE-SUBTREE (not-nil? callback)))
 
       (nimbuses
         [this]
@@ -447,16 +446,14 @@
 
       (blobstore-key-details
         [this]
-        (do
-          (sync-path cluster-state BLOBSTORE-SUBTREE)
-          (get-children cluster-state BLOBSTORE-SUBTREE false)))
+        (sync-path cluster-state BLOBSTORE-SUBTREE)
+        (get-children cluster-state BLOBSTORE-SUBTREE false))
 
       (blobstore-info
         [this blob-key]
         (let [path (blobstore-path blob-key)]
-          (do
-            (sync-path cluster-state path)
-            (get-children cluster-state path false))))
+          (sync-path cluster-state path)
+          (get-children cluster-state path false)))
 
       (active-storms
         [this]
