@@ -569,16 +569,6 @@ service Nimbus {
   void debug(1: string name, 2: string component, 3: bool enable, 4: double samplingPercentage) throws (1: NotAliveException e, 2: AuthorizationException aze);
   void uploadNewCredentials(1: string name, 2: Credentials creds) throws (1: NotAliveException e, 2: InvalidTopologyException ite, 3: AuthorizationException aze);
 
-  //BLOB APIs
-  // These blob APIs guarantee very little.
-  // Writes and reads can fail at any point in time and should be retried.
-  // Deletes are a best effort and if someone is adding or updating the same key
-  //  at the same time the key may exist afterwards.
-  // About the only thing that is guaranteed is a blob will be self consistent.
-  // When downloading a blob all of the bits will be from the same version of the
-  // blob. It may even mean that reading throws an exception in the middle.
-  // Many of the APIs have sessions assocIated with them.  If you take too long to
-  // complete a session it may timeout and you will need to start over.
   string beginCreateBlob(1: string key, 2: SettableBlobMeta meta) throws (1: AuthorizationException aze, 2: KeyAlreadyExistsException kae);
   string beginUpdateBlob(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   void uploadBlobChunk(1: string session, 2: binary chunk) throws (1: AuthorizationException aze);
@@ -587,7 +577,6 @@ service Nimbus {
   ReadableBlobMeta getBlobMeta(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   void setBlobMeta(1: string key, 2: SettableBlobMeta meta) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   BeginDownloadResult beginBlobDownload(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
-  //can stop downloading chunks when receive 0-length byte array back
   binary downloadBlobChunk(1: string session) throws (1: AuthorizationException aze);
   void deleteBlob(1: string key) throws (1: AuthorizationException aze, 2: KeyNotFoundException knf);
   ListBlobsResult listBlobs(1: string session); //empty string "" means start at the beginning

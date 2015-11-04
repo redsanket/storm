@@ -186,20 +186,18 @@
       (.. zk (getChildren) (forPath (normalize-path path))))
     (catch Exception e (throw (wrap-in-runtime e)))))
 
-;; Deletes the state inside the zookeeper for a key, for which the
-;; contents of the key starts with nimbus host port information
 (defn delete-node-blobstore
+  "Deletes the state inside the zookeeper for a key, for which the
+   contents of the key starts with nimbus host port information"
   [^CuratorFramework zk ^String parent-path ^String host-port-info]
   (let [parent-path (normalize-path parent-path)
         child-path-list (if (exists-node? zk parent-path false)
                           (into [] (get-children zk parent-path false))
                           [])]
     (doseq [child child-path-list]
-      (if (.startsWith child host-port-info)
-        (do
-          (log-debug "delete-node " "child" child)
-          (delete-node zk (str parent-path "/" child)))
-        ))))
+      (when (.startsWith child host-port-info)
+        (log-debug "delete-node " "child" child)
+        (delete-node zk (str parent-path "/" child))))))
 
 (defn set-data
   [^CuratorFramework zk ^String path ^bytes data]
