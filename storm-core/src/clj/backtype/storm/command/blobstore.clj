@@ -86,11 +86,12 @@
     (log-message "Successfully updated " key)))
 
 (defn create-cli [args]
-  (let [[{file :file acl :acl replication-factor :replication-fctr} [key] _] (cli args ["-f" "--file" :default nil]
+  (let [[{file :file acl :acl replication-factor :replication-factor} [key] _] (cli args ["-f" "--file" :default nil]
                                                   ["-a" "--acl" :default [] :parse-fn as-acl]
                                                   ["-r" "--replication-factor" :default -1 :parse-fn parse-int])
         meta (doto (SettableBlobMeta. acl)
                    (.set_replication_factor replication-factor))]
+    (validate-key-name! key)
     (log-message "Creating " key " with ACL " (pr-str (map access-control-str acl)))
     (if file
       (with-open [f (input-stream file)]
@@ -114,9 +115,9 @@
                 acl (.get_acl (.get_settable meta))]
             (log-message key " " version " " (pr-str (map access-control-str acl))))
           (catch AuthorizationException ae
-            (if-not (empty? args) (log-message "ACCESS DENIED to key: " key)))
+            (if-not (empty? args) (log-error "ACCESS DENIED to key: " key)))
           (catch KeyNotFoundException knf
-            (if-not (empty? args) (log-message key " NOT FOUND"))))))))
+            (if-not (empty? args) (log-error key " NOT FOUND"))))))))
 
 (defn set-acl-cli [args]
   (let [[{set-acl :set} [key] _]

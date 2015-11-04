@@ -51,7 +51,6 @@ public class ConfigValidationAnnotations {
     /**
      * Validators with fields: validatorClass and type
      */
-
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.FIELD)
     public @interface isType {
@@ -82,7 +81,6 @@ public class ConfigValidationAnnotations {
     /**
      * Validators with fields: validatorClass
      */
-
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.FIELD)
     public @interface isString {
@@ -142,7 +140,6 @@ public class ConfigValidationAnnotations {
      * Validates the type of each key and value in a map
      * Validator with fields: validatorClass, keyValidatorClass, valueValidatorClass
      */
-
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.FIELD)
     public @interface isMapEntryType {
@@ -182,7 +179,6 @@ public class ConfigValidationAnnotations {
     /**
      * Complex/custom type validators
      */
-
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.FIELD)
     public @interface isStringOrStringList {

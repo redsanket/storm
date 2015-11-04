@@ -1076,7 +1076,18 @@
     (assoc coll k (apply str (repeat (count (coll k)) "#")))
     coll))
 
-(defn log-thrift-access [request-id remoteAddress principal operation]
+(defn log-thrift-access
+  [request-id remoteAddress principal operation]
   (doto
     (ThriftAccessLogger.)
     (.log (str "Request ID: " request-id " access from: " remoteAddress " principal: " principal " operation: " operation))))
+
+(def DISALLOWED-KEY-NAME-STRS #{"/" "." ":" "\\"})
+
+(defn validate-key-name! [name]
+  (if (some #(.contains name %) DISALLOWED-KEY-NAME-STRS)
+    (throw (RuntimeException.
+             (str "Key name cannot contain any of the following: " (pr-str DISALLOWED-KEY-NAME-STRS))))
+    (if (clojure.string/blank? name)
+      (throw (RuntimeException.
+               ("Key name cannot be blank"))))))

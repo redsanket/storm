@@ -1062,19 +1062,18 @@ public class Config extends HashMap<String, Object> {
     @isInteger
     public static final String NIMBUS_BLOBSTORE_EXPIRATION_SECS = "nimbus.blobstore.expiration.secs";
 
-  /**
-   * A map with blobstore keys mapped to each filename the worker will have access to in the
-   * launch directory to the blob by local file name and uncompress flag. Both localname and
-   * uncompress flag are optional. It uses the key is localname is not specified. Each topology
-   * will have different map of blobs.  Example: topology.blobstore.map: {"blobstorekey" :
-   * {"localname": "myblob", "uncompress": false}, {"blobstorearchivekey" :
-   * {"localname": "myarchive", "uncompress": true}}
-   */
-  public static final String TOPOLOGY_BLOBSTORE_MAP = "topology.blobstore.map";
-  public static final Object TOPOLOGY_BLOBSTORE_MAP_SCHEMA =
-          ConfigValidation.MapOfStringToMapOfStringToObjectValidator;
+    /**
+     * A map with blobstore keys mapped to each filename the worker will have access to in the
+     * launch directory to the blob by local file name and uncompress flag. Both localname and
+     * uncompress flag are optional. It uses the key is localname is not specified. Each topology
+     * will have different map of blobs.  Example: topology.blobstore.map: {"blobstorekey" :
+     * {"localname": "myblob", "uncompress": false}, {"blobstorearchivekey" :
+     * {"localname": "myarchive", "uncompress": true}}
+     */
+    @CustomValidator(validatorClass = MapOfStringToMapOfStringToObjectValidator.class)
+    public static final String TOPOLOGY_BLOBSTORE_MAP = "topology.blobstore.map";
 
-  /**
+    /**
      * A number representing the maximum number of workers any single topology can acquire.
      */
     @isInteger

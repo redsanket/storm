@@ -471,7 +471,19 @@ public class ConfigValidation {
         }
     }
 
-    /**
+   /**
+    * Validate topology.map config
+    */
+    public static class MapOfStringToMapOfStringToObjectValidator extends Validator {
+      @Override
+      public  void validateField(String name, Object o) {
+        ConfigValidationUtils.NestableFieldValidator validator = ConfigValidationUtils.mapFv(ConfigValidationUtils.fv(String.class, false),
+                ConfigValidationUtils.mapFv(String.class, Object.class,true), true);
+        validator.validateField(name, o);
+      }
+    }
+
+   /**
      * Methods for validating confs
      */
 

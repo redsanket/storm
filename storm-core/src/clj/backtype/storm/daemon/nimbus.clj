@@ -1127,7 +1127,11 @@
         blob-store (:blob-store nimbus)
         local-set-of-keys (get-key-set-from-blob-store blob-store)
         all-keys (set (.active-keys storm-cluster-state))
-        locally-available-active-keys (set/intersection local-set-of-keys all-keys)]
+        locally-available-active-keys (set/intersection local-set-of-keys all-keys)
+        keys-to-delete (set/difference local-set-of-keys all-keys)]
+    (log-debug "Deleting keys not on the zookeeper" keys-to-delete)
+    (doseq [key keys-to-delete]
+      (.deleteBlob blob-store key (get-nimbus-subject)))
     (log-debug "Creating list of key entries for blobstore inside zookeeper" all-keys "local" locally-available-active-keys)
     (doseq [key locally-available-active-keys]
       (.setup-blobstore! storm-cluster-state key (:nimbus-host-port-info nimbus) (get-metadata-version blob-store key get-nimbus-subject))

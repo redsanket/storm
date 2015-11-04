@@ -249,7 +249,7 @@
             (rmr (worker-heartbeats-root conf id))
             ;; this avoids a race condition with worker or subprocess writing pid around same time
             (rmpath (worker-pids-root conf id))
-            (rmpath (worker-root conf id))))
+            (rmr (worker-root conf id))))
         (remove-worker-user! conf id)
         (remove-dead-worker id)
       ))
@@ -969,6 +969,7 @@
                        (add-dead-worker worker-id))
             worker-dir (worker-root conf worker-id)]
         (remove-dead-worker worker-id)
+        (create-blobstore-links conf storm-id port worker-id)
         (if run-worker-as-user
           (worker-launcher conf user ["worker" worker-dir (write-script worker-dir command :environment topology-worker-environment)] :log-prefix log-prefix :exit-code-callback callback :directory (File. worker-dir))
           (launch-process command :environment topology-worker-environment :log-prefix log-prefix :exit-code-callback callback :directory (File. worker-dir)))
