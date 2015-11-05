@@ -1298,18 +1298,16 @@ public class Utils {
         remoteBlobStore.setClient(conf, client);
         in = remoteBlobStore.getBlob(key);
         blobStore.createBlob(key, in, rbm.get_settable(), Utils.getNimbusSubject());
-        // client download blobs
-        // if key already exists while creating the blob check for version of the blob, if version  does not match update it
+        // if key already exists while creating the blob else update it
         Iterator<String> keyIterator = blobStore.listKeys(Utils.getNimbusSubject());
         while (keyIterator.hasNext()) {
           if (keyIterator.next().equals(key)) {
-            LOG.debug("Success");
+            LOG.debug("Success creating key, {}", key);
             isSuccess = true;
             break;
           }
         }
       } catch (KeyAlreadyExistsException e) {
-        isSuccess = true;
         AtomicOutputStream out = null;
         try {
           out = blobStore.updateBlob(key, Utils.getNimbusSubject());
@@ -1320,8 +1318,10 @@ public class Utils {
             out.write(buffer, 0, len);
           }
           if(out != null) {
+
             out.close();
           }
+          isSuccess = true;
         } catch (IOException | AuthorizationException | KeyNotFoundException exception) {
           throw new RuntimeException(exception);
         } finally {
@@ -1332,8 +1332,9 @@ public class Utils {
           }
         }
       } catch (AuthorizationException authExp) {
+        throw new RuntimeException(authExp);
       } catch (Exception exp) {
-        // Logging an exception while client is connecting would be better
+        // Logging an exception while client is connecting
         LOG.error("Exception {}", exp);
       }
     }
