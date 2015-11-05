@@ -669,9 +669,9 @@
                           (fn [] (.add processes-event-manager sync-processes))))
       ;; Blob update thread. Starts with 30 seconds delay, every 30 seconds
       (schedule-recurring (:blob-update-timer supervisor)
-        30
-        30
-        (fn [] (.add event-manager synchronize-blobs-fn)))
+                          30
+                          30
+                          (fn [] (.add event-manager synchronize-blobs-fn)))
     (log-message "Starting supervisor with id " (:supervisor-id supervisor) " at host " (:my-hostname supervisor))
     (reify
      Shutdownable
@@ -1009,8 +1009,7 @@
         (do
           (log-message "Copying resources at " (str url) " to " target-dir)
           (FileUtils/copyDirectory (File. (.getFile url)) (File. target-dir))
-          ))
-      )))
+          )))))
 
 (defmethod launch-worker
     :local [supervisor storm-id port worker-id mem-onheap]

@@ -1084,7 +1084,8 @@
 
 (def DISALLOWED-KEY-NAME-STRS #{"/" "." ":" "\\"})
 
-(defn validate-key-name! [name]
+(defn validate-key-name!
+  [name]
   (if (some #(.contains name %) DISALLOWED-KEY-NAME-STRS)
     (throw (RuntimeException.
              (str "Key name cannot contain any of the following: " (pr-str DISALLOWED-KEY-NAME-STRS))))
