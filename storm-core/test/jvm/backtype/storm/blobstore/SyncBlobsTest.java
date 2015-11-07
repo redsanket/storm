@@ -102,7 +102,7 @@ public class SyncBlobsTest {
   public void testGetLatestVersion() throws Exception {
     List<String> stateInfoList = new ArrayList<String>();
     stateInfoList.add("nimbus1:8000-123789434");
-    stateInfoList.add("nimbus1:8000-123789435");
+    stateInfoList.add("nimbus-1:8000-123789435");
     assertTrue("Failed to get the latest version", Utils.getLatestVersion(stateInfoList)==123789435);
   }
 }

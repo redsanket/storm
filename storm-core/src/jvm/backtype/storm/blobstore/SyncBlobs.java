@@ -42,6 +42,7 @@ public class SyncBlobs {
   private List<String> blobStoreKeyList = new ArrayList<String>();
   private List<String> zookeeperKeyList = new ArrayList<String>();
   private NimbusInfo nimbusInfo;
+  private final String BLOBSTORE_SUBTREE="/blobstore";
 
 
   public SyncBlobs(BlobStore blobStore, Map conf) {
@@ -88,7 +89,7 @@ public class SyncBlobs {
 
     for (String key : keyListToDownload) {
       List<NimbusInfo> nimbusInfoList = Utils.getNimbodesWithLatestVersionOfBlob(zkClient, key);
-      if(Utils.downloadBlob(conf, blobStore, key, nimbusInfoList)) {
+      if(Utils.downloadMissingBlob(conf, blobStore, key, nimbusInfoList)) {
         Utils.createStateInZookeeper(conf, key, nimbusInfo);
       }
     }
@@ -120,19 +121,8 @@ public class SyncBlobs {
     try {
       List<String> stateInfo = new ArrayList<String>();
       for (String key : keyListBlobStore) {
-        if(zkClient.checkExists().forPath("/blobstore/" + key) == null) {
-          return;
-        }
-        stateInfo = zkClient.getChildren().forPath("/blobstore/" + key);
-        ReadableBlobMeta rbm = blobStore.getBlobMeta(key, Utils.getNimbusSubject());
-        LOG.debug("StateInfo {} readable blob meta-data {}", stateInfo.toString(), rbm.get_version());
-        if (rbm.get_version() < Utils.getLatestVersion(stateInfo)) {
-          List<NimbusInfo> nimbusInfoList = Utils.getNimbodesWithLatestVersionOfBlob(zkClient, key);
-          if(Utils.downloadBlob(conf, blobStore, key, nimbusInfoList)) {
-            LOG.debug("Updating state inside zookeeper");
-            Utils.createStateInZookeeper(conf, key, nimbusInfo);
-          }
-        }
+        LOG.debug("updating blob");
+        Utils.updateKeyForBlobStore(conf, blobStore, zkClient, key, nimbusInfo);
       }
     } catch (Exception exp) {
         throw new RuntimeException(exp);

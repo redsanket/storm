@@ -19,6 +19,7 @@ import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +41,7 @@ import java.util.ArrayList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.*;
 
 public class BlobStoreTest {
   private static final Logger LOG = LoggerFactory.getLogger(BlobStoreTest.class);
@@ -132,12 +134,19 @@ public class BlobStoreTest {
 
   private LocalFsBlobStore initLocalFs() {
     LocalFsBlobStore store = new LocalFsBlobStore();
+    // Spy object that tries to mock the real object store
+    LocalFsBlobStore spy = spy(store);
+    Mockito.doNothing().when(spy).checkForBlobUpdate("test");
+    Mockito.doNothing().when(spy).checkForBlobUpdate("other");
+    Mockito.doNothing().when(spy).checkForBlobUpdate("test-empty-subject-WE");
+    Mockito.doNothing().when(spy).checkForBlobUpdate("test-empty-subject-DEF");
+    Mockito.doNothing().when(spy).checkForBlobUpdate("test-empty-acls");
     Map conf = Utils.readStormConfig();
     conf.put(Config.STORM_LOCAL_DIR, baseFile.getAbsolutePath());
     conf.put(Config.STORM_PRINCIPAL_TO_LOCAL_PLUGIN,"backtype.storm.security.auth.DefaultPrincipalToLocal");
     ArrayList<String> zookeeper_list = new ArrayList<>();
-    store.prepare(conf, null, null);
-    return store;
+    spy.prepare(conf, null, null);
+    return spy;
   }
 
   @Test

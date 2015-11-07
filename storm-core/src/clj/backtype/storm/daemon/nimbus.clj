@@ -30,7 +30,7 @@
   (:import [java.nio ByteBuffer]
            [java.util Collections List HashMap ArrayList])
   (:import [backtype.storm.blobstore AtomicOutputStream BlobStoreAclHandler
-            InputStreamWithMeta KeyFilter SyncBlobs])
+            InputStreamWithMeta KeyFilter KeyVersion SyncBlobs])
   (:import [java.io File FileOutputStream FileInputStream])
   (:import [java.net InetAddress])
   (:import [java.nio.channels Channels WritableByteChannel])
@@ -400,9 +400,9 @@
       [(.getNodeId slot) (.getPort slot)]
       )))
 
-(defn- get-metadata-version [blob-store key subject]
-  (let [blob-meta (.getBlobMeta blob-store key subject)]
-    (.get_version blob-meta)))
+(defn- get-version-for-key [key conf]
+  (let [version (KeyVersion. key)]
+    (.getKey version conf)))
 
 (defn get-key-set-from-blob-store [blob-store]
   (let [key-iter (.listKeys blob-store nimbus-subject)]
@@ -424,13 +424,13 @@
       (do
         (.createBlob blob-store jar-key (FileInputStream. tmp-jar-location) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
         (if (instance? LocalFsBlobStore blob-store)
-          (.setup-blobstore! storm-cluster-state jar-key nimbus-host-port-info (get-metadata-version blob-store jar-key subject)))))
+          (.setup-blobstore! storm-cluster-state jar-key nimbus-host-port-info (get-version-for-key jar-key conf)))))
     (.createBlob blob-store conf-key (Utils/toCompressedJsonConf storm-conf) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
     (if (instance? LocalFsBlobStore blob-store)
-      (.setup-blobstore! storm-cluster-state conf-key nimbus-host-port-info (get-metadata-version blob-store conf-key subject)))
+      (.setup-blobstore! storm-cluster-state conf-key nimbus-host-port-info (get-version-for-key conf-key conf)))
     (.createBlob blob-store code-key (Utils/serialize topology) (SettableBlobMeta. BlobStoreAclHandler/DEFAULT) subject)
     (if (instance? LocalFsBlobStore blob-store)
-      (.setup-blobstore! storm-cluster-state code-key nimbus-host-port-info (get-metadata-version blob-store code-key subject)))))
+      (.setup-blobstore! storm-cluster-state code-key nimbus-host-port-info (get-version-for-key code-key conf)))))
 
 (defn- read-storm-topology [storm-id blob-store]
   (Utils/deserialize
@@ -1122,13 +1122,14 @@
         local-set-of-keys (get-key-set-from-blob-store blob-store)
         all-keys (set (.active-keys storm-cluster-state))
         locally-available-active-keys (set/intersection local-set-of-keys all-keys)
-        keys-to-delete (set/difference local-set-of-keys all-keys)]
+        keys-to-delete (set/difference local-set-of-keys all-keys)
+        conf (:conf nimbus)]
     (log-debug "Deleting keys not on the zookeeper" keys-to-delete)
     (doseq [key keys-to-delete]
       (.deleteBlob blob-store key nimbus-subject))
     (log-debug "Creating list of key entries for blobstore inside zookeeper" all-keys "local" locally-available-active-keys)
     (doseq [key locally-available-active-keys]
-      (.setup-blobstore! storm-cluster-state key (:nimbus-host-port-info nimbus) (get-metadata-version blob-store key nimbus-subject)))))
+      (.setup-blobstore! storm-cluster-state key (:nimbus-host-port-info nimbus) (get-version-for-key key conf)))))
 
 (defn- get-errors [storm-cluster-state storm-id component-id]
   (->> (.errors storm-cluster-state storm-id component-id)
@@ -1754,9 +1755,10 @@
       (^void createStateInZookeeper [this ^String blob-key]
         (let [storm-cluster-state (:storm-cluster-state nimbus)
               blob-store (:blob-store nimbus)
-              nimbus-host-port-info (:nimbus-host-port-info nimbus)]
+              nimbus-host-port-info (:nimbus-host-port-info nimbus)
+              conf (:conf nimbus)]
           (if (instance? LocalFsBlobStore blob-store)
-            (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-metadata-version blob-store blob-key nimbus-subject)))
+            (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-version-for-key blob-key conf)))
           (log-debug "Created state in zookeeper" storm-cluster-state blob-store nimbus-host-port-info)))
 
       (^void uploadBlobChunk [this ^String session ^ByteBuffer blob-chunk]
@@ -1839,8 +1841,7 @@
 
       (^void deleteBlob [this ^String blob-key]
         (let [subject (->> (ReqContext/context)
-                           (.subject))
-              version (get-metadata-version (:blob-store nimbus) blob-key subject)]
+                           (.subject))]
         (.deleteBlob (:blob-store nimbus) blob-key subject)
         (if (instance? LocalFsBlobStore blob-store)
           (.remove-blobstore-key! (:storm-cluster-state nimbus) blob-key))

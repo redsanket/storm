@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,7 @@ public class LocalFsBlobStore extends BlobStore {
   private static final String DATA_PREFIX = "data_";
   private static final String META_PREFIX = "meta_";
   protected BlobStoreAclHandler _aclHandler;
+  private final String BLOBSTORE_SUBTREE = "/blobstore";
   private NimbusInfo nimbusInfo;
   private FileBlobStoreImpl fbs;
   private Map conf;
@@ -154,7 +156,9 @@ public class LocalFsBlobStore extends BlobStore {
 
   @Override
   public ReadableBlobMeta getBlobMeta(String key, Subject who) throws AuthorizationException, KeyNotFoundException {
-    checkForBlobOrDownload(key);
+    if(!checkForBlobOrDownload(key)) {
+      checkForBlobUpdate(key);
+    }
     validateKey(key);
     SettableBlobMeta meta = getStoredBlobMeta(key);
     _aclHandler.validateUserCanReadMeta(meta.get_acl(), who, key);
@@ -212,7 +216,9 @@ public class LocalFsBlobStore extends BlobStore {
 
   @Override
   public InputStreamWithMeta getBlob(String key, Subject who) throws AuthorizationException, KeyNotFoundException {
-    checkForBlobOrDownload(key);
+    if(!checkForBlobOrDownload(key)) {
+      checkForBlobUpdate(key);
+    }
     validateKey(key);
     SettableBlobMeta meta = getStoredBlobMeta(key);
     _aclHandler.validateACL(meta.get_acl(), READ, who, key);
@@ -262,17 +268,19 @@ public class LocalFsBlobStore extends BlobStore {
     return replicationCount;
   }
 
-  // This additional check and download is for nimbus high availability in case you have more than one nimbus
-  public void checkForBlobOrDownload(String key) {
+  //This additional check and download is for nimbus high availability in case you have more than one nimbus
+  public boolean checkForBlobOrDownload(String key) {
+    boolean checkBlobDownload = false;
     try {
       List<String> keyList = Utils.getKeyListFromBlobStore(this);
-      if(!keyList.contains(key)) {
+      if (!keyList.contains(key)) {
         CuratorFramework zkClient = Utils.createZKClient(conf);
         if (zkClient.checkExists().forPath("/blobstore/" + key) != null) {
           List<NimbusInfo> nimbusList = Utils.getNimbodesWithLatestVersionOfBlob(zkClient, key);
-          if (Utils.downloadBlob(conf, this, key, nimbusList)) {
+          if (Utils.downloadMissingBlob(conf, this, key, nimbusList)) {
             LOG.debug("Updating blobs state");
             Utils.createStateInZookeeper(conf, key, nimbusInfo);
+            checkBlobDownload = true;
           }
         }
         zkClient.close();
@@ -280,6 +288,13 @@ public class LocalFsBlobStore extends BlobStore {
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
+    return checkBlobDownload;
+  }
+
+  public void checkForBlobUpdate(String key) {
+    CuratorFramework zkClient = Utils.createZKClient(conf);
+    Utils.updateKeyForBlobStore(conf, this, zkClient, key, nimbusInfo);
+    zkClient.close();
   }
 
   public void fullCleanup(long age) throws IOException {

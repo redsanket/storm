@@ -117,6 +117,7 @@ public class Utils {
     public static final String DEFAULT_BLOB_VERSION_SUFFIX = ".version";
     public static final String CURRENT_BLOB_SUFFIX_ID = "current";
     public static final String DEFAULT_CURRENT_BLOB_SUFFIX = "." + CURRENT_BLOB_SUFFIX_ID;
+    public static final String BLOBSTORE_SUBTREE="/blobstore";
     private static ThreadLocal<TSerializer> threadSer = new ThreadLocal<TSerializer>();
     private static ThreadLocal<TDeserializer> threadDes = new ThreadLocal<TDeserializer>();
     private static SerializationDelegate serializationDelegate;
@@ -1232,142 +1233,206 @@ public class Utils {
         }
     }
 
-  public static CuratorFramework createZKClient(Map conf) {
-    List<String> zkServers = (List<String>) conf.get(Config.STORM_ZOOKEEPER_SERVERS);
-    Object port = conf.get(Config.STORM_ZOOKEEPER_PORT);    
-    ZookeeperAuthInfo zkAuthInfo = new ZookeeperAuthInfo(conf);
-    CuratorFramework zkClient = newCurator(conf, zkServers, port, (String) conf.get(Config.STORM_ZOOKEEPER_ROOT), zkAuthInfo);
-    zkClient.start();
-    return zkClient;
-  }
-
-  public static Subject getNimbusSubject() {
-      Subject subject = new Subject();
-      subject.getPrincipals().add(new NimbusPrincipal());
-      return subject;
-  }
-
-  // Check for latest version of a key inside zookeeper and return nimbodes containing the latest version
-  public static synchronized List<NimbusInfo> getNimbodesWithLatestVersionOfBlob(CuratorFramework zkClient, String key) throws Exception {
-    List<String> stateInfoList = zkClient.getChildren().forPath("/blobstore/" + key);
-    List<NimbusInfo> nimbusInfoList = new ArrayList<NimbusInfo>();
-    Long version = getLatestVersion(stateInfoList);
-    LOG.debug("getNimbodesWithLatestVersion stateInfo {} version {}", stateInfoList, version);
-    // Get the nimbodes with the latest version
-    for(String state : stateInfoList) {
-      String[] nimbusKeyVersionInfo = state.split("-");
-      if (version != null && version == Long.parseLong(nimbusKeyVersionInfo[1])) {
-        nimbusInfoList.add(NimbusInfo.parse(nimbusKeyVersionInfo[0]));
-      }
+    public static CuratorFramework createZKClient(Map conf) {
+        List<String> zkServers = (List<String>) conf.get(Config.STORM_ZOOKEEPER_SERVERS);
+        Object port = conf.get(Config.STORM_ZOOKEEPER_PORT);
+        ZookeeperAuthInfo zkAuthInfo = new ZookeeperAuthInfo(conf);
+        CuratorFramework zkClient = newCurator(conf, zkServers, port, (String) conf.get(Config.STORM_ZOOKEEPER_ROOT), zkAuthInfo);
+        zkClient.start();
+        return zkClient;
     }
-    LOG.debug("nimbusInfoList {}", nimbusInfoList);
-    return nimbusInfoList;
-  }
 
-  // Get version details from latest version of the blob
-  public static Long getLatestVersion (List<String> stateInfoList) {
-    Long version = 0l;
-    // Get latest version of the blob present in the zookeeper --> possible to refactor this piece of code
-    for(String state : stateInfoList) {
-      String[] nimbusKeyVersionInfo = state.split("-");
-      if (nimbusKeyVersionInfo.length == 2 && version < Long.parseLong(nimbusKeyVersionInfo[1])) {
-        version = Long.parseLong(nimbusKeyVersionInfo[1]);
-        LOG.debug("Version {}", version);
-      }
+    public static Subject getNimbusSubject() {
+        Subject subject = new Subject();
+        subject.getPrincipals().add(new NimbusPrincipal());
+        return subject;
     }
-    LOG.debug("Latest Version {}", version);
-    return version;
-  }
 
-  // Download blob from potential nimbodes
-  public static synchronized boolean downloadBlob(Map conf, BlobStore blobStore, String key, List<NimbusInfo> nimbusInfos) throws TTransportException {
-    NimbusClient client = null;
-    ReadableBlobMeta rbm = null;
-    ClientBlobStore remoteBlobStore = null;
-    InputStreamWithMeta in = null;
-    Boolean isSuccess = false;
-    LOG.debug("Download blob NimbusInfos {}", nimbusInfos);
-    for (NimbusInfo nimbusInfo : nimbusInfos) {
-      if(isSuccess) {
-        break;
-      }
-      try {
-        client = new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null);
-        rbm = client.getClient().getBlobMeta(key);
-        remoteBlobStore = new NimbusBlobStore();
-        remoteBlobStore.setClient(conf, client);
-        in = remoteBlobStore.getBlob(key);
-        blobStore.createBlob(key, in, rbm.get_settable(), Utils.getNimbusSubject());
-        // if key already exists while creating the blob else update it
-        Iterator<String> keyIterator = blobStore.listKeys(Utils.getNimbusSubject());
-        while (keyIterator.hasNext()) {
-          if (keyIterator.next().equals(key)) {
-            LOG.debug("Success creating key, {}", key);
-            isSuccess = true;
-            break;
+
+    // Normalize state
+    public static String[] normalizeVersionInfo(String nimbusKeyVersionInfo) {
+      String[] normalizeVersionInfo = new String[2];
+      int lastIndex = nimbusKeyVersionInfo.lastIndexOf("-");
+      normalizeVersionInfo[0] = nimbusKeyVersionInfo.substring(0, lastIndex);
+      normalizeVersionInfo[1] = nimbusKeyVersionInfo.substring(lastIndex + 1);
+      return normalizeVersionInfo;
+    }
+
+    // Check for latest version of a key inside zookeeper and return nimbodes containing the latest version
+    public static synchronized List<NimbusInfo> getNimbodesWithLatestVersionOfBlob(CuratorFramework zkClient, String key) throws Exception {
+        List<String> stateInfoList = zkClient.getChildren().forPath("/blobstore/" + key);
+        List<NimbusInfo> nimbusInfoList = new ArrayList<NimbusInfo>();
+        int version = getLatestVersion(stateInfoList);
+        LOG.debug("getNimbodesWithLatestVersion stateInfo {} version {}", stateInfoList, version);
+        // Get the nimbodes with the latest version
+        for(String state : stateInfoList) {
+          String[] nimbusKeyVersionInfo = normalizeVersionInfo(state);
+          if (version == Integer.parseInt(nimbusKeyVersionInfo[1])) {
+            nimbusInfoList.add(NimbusInfo.parse(nimbusKeyVersionInfo[0]));
           }
         }
-      } catch (KeyAlreadyExistsException e) {
-        AtomicOutputStream out = null;
+        LOG.debug("nimbusInfoList {}", nimbusInfoList);
+        return nimbusInfoList;
+    }
+
+    // Get version details from latest version of the blob
+    public static int getLatestVersion(List<String> stateInfoList) {
+        int version = 0;
+        // Get latest version of the blob present in the zookeeper --> possible to refactor this piece of code
+        for(String state : stateInfoList) {
+          String[] nimbusKeyVersionInfo = normalizeVersionInfo(state);
+          if (nimbusKeyVersionInfo.length == 2 && version < Integer.parseInt(nimbusKeyVersionInfo[1])) {
+            version = Integer.parseInt(nimbusKeyVersionInfo[1]);
+            LOG.debug("Version {}", version);
+          }
+        }
+        LOG.debug("Latest Version {}", version);
+        return version;
+    }
+
+    // Download blob from potential nimbodes
+    public static synchronized boolean downloadMissingBlob(Map conf, BlobStore blobStore, String key, List<NimbusInfo> nimbusInfos)
+            throws TTransportException {
+        NimbusClient client = null;
+        ReadableBlobMeta rbm = null;
+        ClientBlobStore remoteBlobStore = null;
+        InputStreamWithMeta in = null;
+        Boolean isSuccess = false;
+        LOG.debug("Download blob NimbusInfos {}", nimbusInfos);
+        for (NimbusInfo nimbusInfo : nimbusInfos) {
+            if(isSuccess) {
+              break;
+            }
+            try {
+              client = new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null);
+              rbm = client.getClient().getBlobMeta(key);
+              remoteBlobStore = new NimbusBlobStore();
+              remoteBlobStore.setClient(conf, client);
+              in = remoteBlobStore.getBlob(key);
+              blobStore.createBlob(key, in, rbm.get_settable(), Utils.getNimbusSubject());
+              // if key already exists while creating the blob else update it
+              Iterator<String> keyIterator = blobStore.listKeys(Utils.getNimbusSubject());
+              while (keyIterator.hasNext()) {
+                if (keyIterator.next().equals(key)) {
+                  LOG.debug("Success creating key, {}", key);
+                  isSuccess = true;
+                  break;
+                }
+              }
+            } catch (IOException | KeyNotFoundException | AuthorizationException exception) {
+                throw new RuntimeException(exception);
+            } catch (KeyAlreadyExistsException kae) {
+              LOG.debug("KeyAlreadyExistsException Update required {}", kae);
+            } catch (Exception exp) {
+              // Logging an exception while client is connecting
+              LOG.error("Exception {}", exp);
+            }
+        }
+
+        if (isSuccess != true) {
+          LOG.error("Could not download or update the blob with key" + key);
+          return false;
+        }
+        return isSuccess;
+      }
+
+      // Download blob from potential nimbodes
+    public static synchronized boolean downloadUpdatedBlob(Map conf, BlobStore blobStore, String key, List<NimbusInfo> nimbusInfos)
+            throws TTransportException {
+      NimbusClient client = null;
+      ClientBlobStore remoteBlobStore = null;
+      InputStreamWithMeta in = null;
+      AtomicOutputStream out = null;
+      Boolean isSuccess = false;
+      LOG.debug("Download blob NimbusInfos {}", nimbusInfos);
+      for (NimbusInfo nimbusInfo : nimbusInfos) {
+        if(isSuccess) {
+          break;
+        }
         try {
-          out = blobStore.updateBlob(key, Utils.getNimbusSubject());
+          client = new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null);
+          remoteBlobStore = new NimbusBlobStore();
+          remoteBlobStore.setClient(conf, client);
           in = remoteBlobStore.getBlob(key);
+          out = blobStore.updateBlob(key, Utils.getNimbusSubject());
           byte[] buffer = new byte[2048];
           int len = 0;
           while ((len = in.read(buffer)) > 0) {
             out.write(buffer, 0, len);
           }
           if(out != null) {
-
             out.close();
           }
           isSuccess = true;
-        } catch (IOException | AuthorizationException | KeyNotFoundException exception) {
+        } catch (IOException | KeyNotFoundException | AuthorizationException exception) {
           throw new RuntimeException(exception);
-        } finally {
-          try {
-            out.cancel();
-          } catch (IOException exp) {
-            throw new RuntimeException(exp);
-          }
+        } catch (Exception exp) {
+          // Logging an exception while client is connecting
+          LOG.error("Exception {}", exp);
         }
-      } catch (AuthorizationException authExp) {
-        throw new RuntimeException(authExp);
-      } catch (Exception exp) {
-        // Logging an exception while client is connecting
-        LOG.error("Exception {}", exp);
       }
+
+      if (isSuccess != true) {
+        LOG.error("Could not download or update the blob with key" + key);
+        return false;
+      }
+      return isSuccess;
     }
 
-    if (isSuccess != true) {
-      LOG.error("Could not download or update the blob with key" + key);
-      return false;
+    // Get the list of keys from blobstore
+    public static List<String> getKeyListFromBlobStore(BlobStore blobStore) throws Exception {
+        Iterator<String> keys = blobStore.listKeys(Utils.getNimbusSubject());
+        List<String> keyList = new ArrayList<String>();
+        while (keys != null && keys.hasNext()) {
+            keyList.add(keys.next());
+        }
+        LOG.debug("KeyList from blobstore {}", keyList);
+        return keyList;
     }
-    return true;
-  }
 
-  // Get the list of keys from blobstore
-  public static List<String> getKeyListFromBlobStore(BlobStore blobStore) throws Exception {
-    Iterator<String> keys = blobStore.listKeys(Utils.getNimbusSubject());
-    List<String> keyList = new ArrayList<String>();
-    while (keys != null && keys.hasNext()) {
-      keyList.add(keys.next());
+    public static void createStateInZookeeper(Map conf, String key, NimbusInfo nimbusInfo) throws TTransportException {
+        ClientBlobStore cb = new NimbusBlobStore();
+        cb.setClient(conf, new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null));
+        cb.createStateInZookeeper(key);
     }
-    LOG.debug("KeyList from blobstore {}", keyList);
-    return keyList;
-  }
 
-  public static void createStateInZookeeper(Map conf, String key, NimbusInfo nimbusInfo) throws TTransportException{
-    ClientBlobStore cb = new NimbusBlobStore();
-    cb.setClient(conf, new NimbusClient(conf, nimbusInfo.getHost(), nimbusInfo.getPort(), null));
-    cb.createStateInZookeeper(key);
-  }
+    public static ClientBlobStore getClientBlobStore(Map conf) {
+        ClientBlobStore store = (ClientBlobStore) newInstance((String)conf.get(Config.CLIENT_BLOBSTORE));
+        store.prepare(conf);
+        return store;
+    }
 
-  public static ClientBlobStore getClientBlobStore(Map conf) {
-    ClientBlobStore store = (ClientBlobStore) newInstance((String)conf.get(Config.CLIENT_BLOBSTORE));
-    store.prepare(conf);
-    return store;
-  }
+    public static synchronized void updateKeyForBlobStore (Map conf, BlobStore blobStore, CuratorFramework zkClient, String key, NimbusInfo nimbusDetails) {
+        try {
+          // This is to avoid mocking of unit tests at several places as nimbusDetails
+          // and moreover the nimbusInfo is not required for HdfsBlobstore only for LocalFsBlobstore
+          if (nimbusDetails == null) {
+            return;
+          }
+          boolean isListContainsCurrentNimbusInfo = false;
+          List<String> stateInfo = new ArrayList<String>();
+          if (zkClient.checkExists().forPath(BLOBSTORE_SUBTREE + "/" + key) == null) {
+            return;
+          }
+          stateInfo = zkClient.getChildren().forPath(BLOBSTORE_SUBTREE + "/" + key);
+          LOG.debug("StateInfo for update {}", stateInfo.toString());
+          List<NimbusInfo> nimbusInfoList = Utils.getNimbodesWithLatestVersionOfBlob(zkClient, key);
+
+          for(NimbusInfo nimbusInfo:nimbusInfoList) {
+            if(nimbusInfo.getHost().equals(nimbusDetails.getHost())) {
+              isListContainsCurrentNimbusInfo = true;
+              break;
+            }
+          }
+
+          if(!isListContainsCurrentNimbusInfo && Utils.downloadUpdatedBlob(conf, blobStore, key, nimbusInfoList)) {
+            LOG.debug("Updating state inside zookeeper for an update");
+            Utils.createStateInZookeeper(conf, key, nimbusDetails);
+          }
+        } catch (Exception exp) {
+          throw new RuntimeException(exp);
+        }
+      }
 
     /**
      * Given a zip File input it will return its size
