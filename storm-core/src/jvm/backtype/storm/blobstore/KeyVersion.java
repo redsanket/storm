@@ -20,6 +20,8 @@ package backtype.storm.blobstore;
 
 import backtype.storm.utils.Utils;
 import org.apache.curator.framework.CuratorFramework;
+import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.ZooDefs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,6 +35,7 @@ import java.util.List;
 public class KeyVersion {
   private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
   private final String BLOBSTORE_SUBTREE="/blobstore";
+  private final String BLOBSTORE_KEY_COUNTER_SUBTREE="/blobstorekeycounter";
   private String key;
 
   public KeyVersion(String key) {
@@ -45,16 +48,18 @@ public class KeyVersion {
     try {
       // Key has not been created yet and it is the first time it is being created
       if(zkClient.checkExists().forPath(BLOBSTORE_SUBTREE + "/" + key) == null) {
-        LOG.debug("checkexists");
+        LOG.info("checkexists");
+        zkClient.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT)
+                .withACL(ZooDefs.Ids.OPEN_ACL_UNSAFE).forPath(BLOBSTORE_KEY_COUNTER_SUBTREE + "/" + key + "/" + 1);
         return 1;
       }
 
       // When all nimbodes go down and one or few of them come up
       List<String> stateInfoList = zkClient.getChildren().forPath(BLOBSTORE_SUBTREE + "/" + key);
-      LOG.debug("stateInfoList {} stateInfoList {}", stateInfoList.size(), stateInfoList);
+      LOG.info("stateInfoList {} stateInfoList {}", stateInfoList.size(), stateInfoList);
       if(stateInfoList.isEmpty()) {
-        LOG.debug("empty");
-        return 1;
+        LOG.info("empty");
+        return getKeyCounterValue(zkClient, key);
       }
 
       LOG.debug("stateInfoSize {}", stateInfoList.size());
@@ -66,7 +71,17 @@ public class KeyVersion {
       }
       if (stateInfoList.size() > 1 && versions.size() == 1) {
         LOG.debug("enter  size");
-        return versions.first() + 1;
+        if (versions.first() < getKeyCounterValue(zkClient, key)) {
+          LOG.info("counter value");
+          int currentCounter = getKeyCounterValue(zkClient, key);
+          zkClient.delete().deletingChildrenIfNeeded().forPath(BLOBSTORE_KEY_COUNTER_SUBTREE + "/" + key);
+          zkClient.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT)
+                  .withACL(ZooDefs.Ids.OPEN_ACL_UNSAFE).forPath(BLOBSTORE_KEY_COUNTER_SUBTREE + "/" + key + "/" + (currentCounter + 1));
+          return currentCounter + 1;
+        } else {
+          LOG.info("version value");
+          return versions.first() + 1;
+        }
       }
     } catch(Exception e) {
       LOG.error("Exception {}", e);
@@ -77,5 +92,10 @@ public class KeyVersion {
     }
     LOG.debug("versions");
     return versions.last();
+  }
+
+  public int getKeyCounterValue(CuratorFramework zkClient, String key) throws Exception {
+    return Integer.parseInt(zkClient.getChildren()
+            .forPath(BLOBSTORE_KEY_COUNTER_SUBTREE + "/" + key).get(0));
   }
 }

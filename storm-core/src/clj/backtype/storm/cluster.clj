@@ -214,9 +214,9 @@
   (setup-blobstore! [this key nimbusInfo versionInfo])
   (active-keys [this])
   (blobstore [this callback])
-  (blobstore-key-details [this])
   (remove-storm! [this storm-id])
   (remove-blobstore-key! [this blob-key])
+  (remove-key-version! [this blob-key version])
   (report-error [this storm-id component-id node port error])
   (errors [this storm-id component-id])
   (last-error [this storm-id component-id])
@@ -232,6 +232,7 @@
 (def BACKPRESSURE-ROOT "backpressure")
 (def ERRORS-ROOT "errors")
 (def BLOBSTORE-ROOT "blobstore")
+(def BLOBSTORE-KEY-VERSION-COUNTER-ROOT "blobstorekeycounter")
 (def NIMBUSES-ROOT "nimbuses")
 (def CREDENTIALS-ROOT "credentials")
 (def LOGCONFIG-ROOT "logconfigs")
@@ -244,6 +245,7 @@
 (def ERRORS-SUBTREE (str "/" ERRORS-ROOT))
 ;; Blobstore subtree /storm/blobstore
 (def BLOBSTORE-SUBTREE (str "/" BLOBSTORE-ROOT))
+(def BLOBSTORE-KEY-VERSION-COUNTER-SUBTREE (str "/" BLOBSTORE-KEY-VERSION-COUNTER-ROOT))
 (def NIMBUSES-SUBTREE (str "/" NIMBUSES-ROOT))
 (def CREDENTIALS-SUBTREE (str "/" CREDENTIALS-ROOT))
 (def LOGCONFIG-SUBTREE (str "/" LOGCONFIG-ROOT))
@@ -259,6 +261,10 @@
 (defn blobstore-path
   [key]
   (str BLOBSTORE-SUBTREE "/" key))
+
+(defn blobstore-key-version-counter-path
+  [key]
+  (str BLOBSTORE-KEY-VERSION-COUNTER-SUBTREE "/" key))
 
 (defn nimbus-path
   [id]
@@ -444,10 +450,13 @@
 
         (set-ephemeral-node cluster-state (nimbus-path nimbus-id) (Utils/serialize nimbus-summary) acls))
 
-      (blobstore-key-details
-        [this]
-        (sync-path cluster-state BLOBSTORE-SUBTREE)
-        (get-children cluster-state BLOBSTORE-SUBTREE false))
+      (setup-blobstore!
+        [this key nimbusInfo versionInfo]
+        (let [path (str (blobstore-path key) "/" (.toHostPortString nimbusInfo) "-" versionInfo)]
+          (mkdirs cluster-state (blobstore-path key) acls)
+          ;we delete the node first to ensure the node gets created as part of this session only.
+          (delete-node-blobstore cluster-state (str (blobstore-path key)) (.toHostPortString nimbusInfo))
+          (set-ephemeral-node cluster-state path nil acls)))
 
       (blobstore-info
         [this blob-key]
@@ -608,18 +617,15 @@
         (let [thrift-assignment (thriftify-assignment info)]
           (set-data cluster-state (assignment-path storm-id) (Utils/serialize thrift-assignment) acls)))
 
-      (setup-blobstore!
-        [this key nimbusInfo versionInfo]
-        (let [path (str (blobstore-path key) "/" (.toHostPortString nimbusInfo) "-" versionInfo)]
-          (mkdirs cluster-state (blobstore-path key) acls)
-          ;we delete the node first to ensure the node gets created as part of this session only.
-          (delete-node-blobstore cluster-state (str (blobstore-path key)) (.toHostPortString nimbusInfo))
-          (set-ephemeral-node cluster-state path nil acls)))
-
       (remove-blobstore-key!
         [this blob-key]
         (log-debug "removing key" blob-key)
         (delete-node cluster-state (blobstore-path blob-key)))
+
+      (remove-key-version!
+        [this blob-key version]
+        (let [path (str (blobstore-key-version-counter-path key) "/" version)]
+          (delete-node cluster-state path)))
 
       (remove-storm!
         [this storm-id]

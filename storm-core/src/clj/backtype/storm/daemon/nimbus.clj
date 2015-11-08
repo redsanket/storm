@@ -255,10 +255,10 @@
                       (log-message "Killing topology: " storm-id)
                       (.remove-storm! (:storm-cluster-state nimbus)
                                       storm-id)
-                      (if (instance? LocalFsBlobStore (:blob-store nimbus))
+                      (when (instance? LocalFsBlobStore (:blob-store nimbus))
                         (doseq [blob-key (get-key-list-from-id (:conf nimbus) storm-id)]
-                          (.remove-blobstore-key! (:storm-cluster-state nimbus)
-                                                   blob-key)))
+                          (.remove-blobstore-key! (:storm-cluster-state nimbus) blob-key)
+                          (.remove-key-version! (:storm-cluster-state nimbus) blob-key)))
                       nil)
             }
    :rebalancing {:startup (fn [] (delay-event nimbus
@@ -1758,7 +1758,7 @@
               nimbus-host-port-info (:nimbus-host-port-info nimbus)
               conf (:conf nimbus)]
           (if (instance? LocalFsBlobStore blob-store)
-            (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-version-for-key blob-key conf)))
+              (.setup-blobstore! storm-cluster-state blob-key nimbus-host-port-info (get-version-for-key blob-key conf)))
           (log-debug "Created state in zookeeper" storm-cluster-state blob-store nimbus-host-port-info)))
 
       (^void uploadBlobChunk [this ^String session ^ByteBuffer blob-chunk]
@@ -1843,8 +1843,9 @@
         (let [subject (->> (ReqContext/context)
                            (.subject))]
         (.deleteBlob (:blob-store nimbus) blob-key subject)
-        (if (instance? LocalFsBlobStore blob-store)
-          (.remove-blobstore-key! (:storm-cluster-state nimbus) blob-key))
+        (when (instance? LocalFsBlobStore blob-store)
+          (.remove-blobstore-key! (:storm-cluster-state nimbus) blob-key)
+          (.remove-key-version! (:storm-cluster-state nimbus) blob-key))
         (log-message "Deleted blob for key " blob-key)))
 
       (^ListBlobsResult listBlobs [this ^String session]
