@@ -281,6 +281,7 @@ public abstract class BlobStore implements Shutdownable {
         } finally {
             in.close();
             out.flush();
+            out.close();
         }
     }
 

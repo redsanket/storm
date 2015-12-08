@@ -256,7 +256,7 @@ public class BlobStoreTest {
         LOG.info("SLEEPING");
         Thread.sleep(2);
         assertStoreHasExactly(store, "test");
-        readAssertEqualsWithAuth(store, who, "test", 3);
+        readAssertEqualsWithAuth(store, who, "test", 4);
 
         // Test for subject with no principals and acls set to WORLD_EVERYTHING
         who = new Subject();
@@ -442,7 +442,7 @@ public class BlobStoreTest {
         } else {
             fail("Error the blobstore is of unknowntype");
         }    assertStoreHasExactly(store, "test");
-        readAssertEquals(store, "test", 3);
+        readAssertEquals(store, "test", 4);
         try {
             out.close();
         } catch (IOException e) {
